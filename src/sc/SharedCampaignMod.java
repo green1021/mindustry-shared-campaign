@@ -5,10 +5,16 @@ import arc.util.Log;
 import mindustry.core.Version;
 import mindustry.mod.Mod;
 
-/** PC bootstrap only. No campaign features are implemented. */
+/** PC mod: explicit local-only sector sessions plus historical inert M2/M3 experiments. */
 public final class SharedCampaignMod extends Mod {
+    private final StdioLedger ledger = new StdioLedger();
+    private final CampaignInventory inventory = new CampaignInventory();
+    private final SectorSessions sessions = new SectorSessions();
+
     @Override
     public void init() {
+        inventory.init();
+        sessions.init();
         if (Version.build == 160 && Version.revision == 4) {
             Log.info("SC_PC_INIT_OK engine=160.4");
         } else {
@@ -19,8 +25,11 @@ public final class SharedCampaignMod extends Mod {
 
     @Override
     public void registerServerCommands(CommandHandler commands) {
-        commands.register("sc-status", "Bootstrap status only; no campaign features.", args ->
-            Log.info("SC_STATUS version=0.0.1 engine=@.@ features=false",
+        ledger.register(commands);
+        inventory.register(commands);
+        sessions.register(commands);
+        commands.register("sc-status", "PC diagnostic; local sector sessions only, no playable campaign.", args ->
+            Log.info("SC_STATUS version=0.0.4 engine=@.@ features=false",
                 Version.build, Version.revision));
     }
 }

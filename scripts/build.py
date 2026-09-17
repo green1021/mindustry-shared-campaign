@@ -19,10 +19,10 @@ def main():
     CLASSES.mkdir(parents=True)
     run(['nice', '-n', '10', 'javac', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
          '--release', '17', '-cp', str(ENGINE), '-d', str(CLASSES),
-         str(ROOT / 'src/sc/SharedCampaignMod.java')])
+         str(ROOT / 'src/sc/SharedCampaignMod.java'), str(ROOT / 'src/sc/StdioLedger.java'), str(ROOT / 'src/sc/CampaignInventory.java'), str(ROOT / 'src/sc/SectorStore.java'), str(ROOT / 'src/sc/SectorSessions.java')])
     run(['nice', '-n', '10', 'jar', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
          '--create', '--no-manifest', '--file', str(JAR),
-         '-C', str(CLASSES), 'sc/SharedCampaignMod.class', '-C', str(ROOT), 'mod.json'])
+         '-C', str(CLASSES), 'sc', '-C', str(ROOT), 'mod.json'])
     result = {'exit': 0, 'jar_sha256': hashlib.sha256(JAR.read_bytes()).hexdigest(),
               'engine_sha256': hashlib.sha256(ENGINE.read_bytes()).hexdigest()}
     (BUILD / 'build-result.json').write_text(json.dumps(result, indent=2) + '\n')

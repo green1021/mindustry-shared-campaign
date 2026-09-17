@@ -81,7 +81,7 @@ try:
         assert 'SC_NETWORK_DENIED' in text, 'Network guard missing'
         assert '1 mods loaded.' in text, 'Mod loader evidence missing'
         assert 'SC_PC_INIT_OK engine=160.4' in text, 'Real mod init/version marker missing'
-        assert 'SC_STATUS version=0.0.1 engine=160.4 features=false' in text, 'Server command status missing'
+        assert 'SC_STATUS version=0.0.2 engine=160.4 features=false' in text, 'Server command status missing'
         record['passed'] = True
 except Exception as e:
     record['error'] = str(e)

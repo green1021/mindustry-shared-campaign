@@ -1,9 +1,9 @@
 {
   "name": "shared-campaign-pc",
-  "displayName": "Shared Campaign PC Bootstrap",
+  "displayName": "Shared Campaign PC Sector Session Experiment",
   "author": "Shared Campaign contributors",
-  "description": "PC bootstrap only. No shared campaign features implemented.",
-  "version": "0.0.1",
+  "description": "Experimental local stdio host-sector selection and isolated SaveIO sessions. Per-sector resources, no shared wallet. Headless disposable workspace only; no networking, UI or playable shared campaign.",
+  "version": "0.0.4",
   "main": "sc.SharedCampaignMod",
   "java": true,
   "minGameVersion": "160.4"

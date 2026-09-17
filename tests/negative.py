@@ -15,9 +15,9 @@ source = (ROOT / 'src/sc/SharedCampaignMod.java').read_text()
 assert source.count('SC_PC_INIT_OK engine=160.4') == 1
 (fixture / 'SharedCampaignMod.java').write_text(source.replace('SC_PC_INIT_OK engine=160.4', 'SC_PC_INIT_OLD engine=160.4'))
 run(['nice', '-n', '10', 'javac', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1', '--release', '17',
-     '-cp', '/opt/mindustry/server-release.jar', '-d', str(fixture), str(fixture / 'SharedCampaignMod.java')], timeout=20)
+     '-cp', '/opt/mindustry/server-release.jar', '-d', str(fixture), str(fixture / 'SharedCampaignMod.java'), str(ROOT / 'src/sc/StdioLedger.java')], timeout=20)
 run(['nice', '-n', '10', 'jar', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1', '--create', '--no-manifest',
-     '--file', str(ROOT / 'build/negative-fixture.jar'), '-C', str(fixture), 'sc/SharedCampaignMod.class',
+     '--file', str(ROOT / 'build/negative-fixture.jar'), '-C', str(fixture), 'sc/SharedCampaignMod.class', '-C', str(fixture), 'sc/StdioLedger.class',
      '-C', str(ROOT), 'mod.json'], timeout=10)
 p = subprocess.run([sys.executable, str(ROOT / 'tests/smoke.py'), '--jar', 'build/negative-fixture.jar',
                     '--label', 'negative'], cwd=ROOT, timeout=58)
