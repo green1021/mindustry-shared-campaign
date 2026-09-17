@@ -1,0 +1,19 @@
+# Never publish credentials, personal campaigns, or build/runtime state.
+.env
+.env.*
+*.token
+*credentials*
+*password*
+*.key
+*.pem
+*.log
+*.msav
+settings.bin
+settings_backups/
+saves/
+runtime/
+private/
+build/
+.gradle/
+*.jar
+__pycache__/
