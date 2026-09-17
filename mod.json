@@ -1,0 +1,10 @@
+{
+  "name": "shared-campaign-pc",
+  "displayName": "Shared Campaign PC Bootstrap",
+  "author": "Shared Campaign contributors",
+  "description": "PC bootstrap only. No shared campaign features implemented.",
+  "version": "0.0.1",
+  "main": "sc.SharedCampaignMod",
+  "java": true,
+  "minGameVersion": "160.4"
+}
