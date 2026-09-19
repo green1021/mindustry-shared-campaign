@@ -35,10 +35,17 @@ public final class SharedCampaignUI {
 
     private void injectCampaignButton() {
         JoinDialog join = Vars.ui.join;
-        // Add button to the existing buttons table
         join.buttons.button("Connect", () -> {
-            // Placeholder - functionality to be added later
-            Log.info("SC_CONNECT_PLACEHOLDER");
+            BaseDialog d = new BaseDialog("Connect to Campaign");
+            var addressField = new arc.scene.ui.TextField("127.0.0.1:6567");
+            d.cont.add("Address (IP:Port):").pad(10f).row();
+            d.cont.add(addressField).width(300f).pad(10f).row();
+            d.cont.button("Connect", () -> {
+                // Placeholder - functionality to be added later
+                Log.info("SC_CONNECT_PLACEHOLDER addr=" + addressField.getText());
+            }).size(100f, 50f);
+            d.addCloseButton();
+            d.show();
         }).size(180f, 50f);
     }
 
