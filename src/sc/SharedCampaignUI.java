@@ -15,16 +15,27 @@ public final class SharedCampaignUI {
 
         Events.on(ClientLoadEvent.class, e -> {
             try {
-                buildDialog();
-                // 1. Add "Join Shared Campaign" to Main Menu
+                // 1. Hook Main Menu: Add "Campaign Online"
                 if (Vars.ui != null && Vars.ui.menufrag != null) {
-                    // Try to add button to main menu
-                    Log.info("SC_UI_MAIN_MENU_HOOK_READY");
+                    Vars.ui.menufrag.addButton("Campaign Online", () -> {
+                        BaseDialog d = new BaseDialog("Shared Campaign Online");
+                        d.cont.add("Shared Campaign Management").pad(10f).row();
+                        d.cont.button("Host Campaign", () -> {
+                            // Host logic
+                            Log.info("SC_UI_HOST_INIT");
+                        }).size(200f, 50f).row();
+                        d.cont.button("Join Campaign", () -> {
+                            Vars.ui.showTextInput("Enter Host IP", "127.0.0.1", 32, "127.0.0.1", s -> {
+                                Log.info("SC_UI_JOIN_ATTEMPT target=" + s);
+                            });
+                        }).size(200f, 50f).row();
+                        d.addCloseButton();
+                        d.show();
+                    });
+                    Log.info("SC_UI_MAIN_MENU_HOOK_OK");
                 }
-                // 2. Add "Host Shared Campaign" to Planet Dialog (Above Tech Tree)
-                if (Vars.ui != null && Vars.ui.planet != null) {
-                    Log.info("SC_UI_PLANET_HOOK_READY");
-                }
+                
+                buildDialog();
                 Log.info("SC_UI_INIT_OK");
             } catch (Throwable t) {
                 Log.err("SC_UI_INIT_FAIL", t);
