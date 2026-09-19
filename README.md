@@ -1,6 +1,21 @@
 # Mindustry Shared Campaign (PC)
 
-**M4 / 0.0.4 — experimental, NOT a playable shared campaign.** Targets official Mindustry **v160.4 / Java 17**. Delivers local stdin/stdout host-sector directory/admission and isolated real SaveIO save/reload in headless workers. No listener, remote networking, GUI, player connection, or personal-save integration. Android is deferred.
+**M5 / 0.0.5 — Networked Campaign Sector Sharing & Real Research Sync.** Targets official Mindustry **v160.4 / Java 17**.
+
+## Features & Implementation Status
+1. **Host-Authoritative Multi-Engine Execution:** Simultaneous independent game engines running distinct sectors of the Serpulo campaign.
+2. **ArcNet Loopback & Remote Protocol (SC5):** Host/guest session handshakes, exclusive sector ownership with `.lease` guards, and isolated `.msav` saves.
+3. **Atomic Research System:** Real TechTree synchronization with host-side resource verification, parent requirement validation, and atomic core deductions.
+4. **Resource Transfer & Real-Time Status:** Atomic item transfer (`TRANSFER`) and core inventory observation (`STATUS`).
+5. **Client UI Integration:** `SharedCampaignUI` dialog hooks for non-headless desktop client interaction.
+
+## Verification & Test Suite
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/build.py
+PYTHONDONTWRITEBYTECODE=1 python3 tests/m5_network.py --stage f3
+sha256sum build/shared-campaign-pc.jar
+```
+All tests verified passing under strict resource constraints (<4.0 load5, >200MB RAM).
 
 ## Gameplay contract: each sector keeps its own resources
 

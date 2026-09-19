@@ -9,12 +9,16 @@ import mindustry.mod.Mod;
 public final class SharedCampaignMod extends Mod {
     private final StdioLedger ledger = new StdioLedger();
     private final CampaignInventory inventory = new CampaignInventory();
+    private final NetworkCampaign network = new NetworkCampaign();
     private final SectorSessions sessions = new SectorSessions();
+    private final SharedCampaignUI ui = new SharedCampaignUI();
 
     @Override
     public void init() {
         inventory.init();
         sessions.init();
+        network.init();
+        ui.init();
         if (Version.build == 160 && Version.revision == 4) {
             Log.info("SC_PC_INIT_OK engine=160.4");
         } else {
@@ -28,6 +32,7 @@ public final class SharedCampaignMod extends Mod {
         ledger.register(commands);
         inventory.register(commands);
         sessions.register(commands);
+        network.register(commands);
         commands.register("sc-status", "PC diagnostic; local sector sessions only, no playable campaign.", args ->
             Log.info("SC_STATUS version=0.0.4 engine=@.@ features=false",
                 Version.build, Version.revision));

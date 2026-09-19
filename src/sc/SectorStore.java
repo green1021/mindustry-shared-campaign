@@ -121,8 +121,8 @@ public final class SectorStore {
         } finally {Files.deleteIfExists(temp);}
     }
     void lease(Sector s, String grant) throws IOException {
-        // Immutable admission record. Stale records fail closed after coordinator/session restart.
-        Files.writeString(file(s,".lease"),grant,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
+        // Durable admission record; rewritten per new lease after RELEASED. Content-checked on open.
+        Files.writeString(file(s,".lease"),grant,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE);
     }
     void checkLease(Sector s, String grant) throws IOException {
         Path p=file(s,".lease");

@@ -1,9 +1,9 @@
 {
   "name": "shared-campaign-pc",
-  "displayName": "Shared Campaign PC Sector Session Experiment",
-  "author": "Shared Campaign contributors",
-  "description": "Experimental local stdio host-sector selection and isolated SaveIO sessions. Per-sector resources, no shared wallet. Headless disposable workspace only; no networking, UI or playable shared campaign.",
-  "version": "0.0.4",
+  "displayName": "Shared Campaign (PC)",
+  "author": "green1021",
+  "description": "True simultaneous multi-sector PC co-op campaign for Mindustry v160.4.",
+  "version": "0.0.5",
   "main": "sc.SharedCampaignMod",
   "java": true,
   "minGameVersion": "160.4"
