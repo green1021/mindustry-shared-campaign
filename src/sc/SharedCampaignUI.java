@@ -22,15 +22,14 @@ public final class SharedCampaignUI {
             }
         }, 1.0f);
 
-        // 2. Add "Host Campaign" to Planet Dialog - use timer since planet UI is lazy-loaded
+        // 2. Add "Host Campaign" to Planet Dialog - recurring check since planet UI is recreated each time
         Timer.schedule(() -> {
             if (Vars.ui != null && Vars.ui.planet != null) {
                 Core.app.post(() -> {
                     injectHostCampaignButton();
-                    Log.info("SC_UI_PLANET_HOOK_OK");
                 });
             }
-        }, 1.5f);
+        }, 1.5f, 2.0f); // Check every 2 seconds
 
         buildDialog();
     }
@@ -52,7 +51,11 @@ public final class SharedCampaignUI {
     }
 
     private void injectHostCampaignButton() {
-        // PlanetDialog has sectorTop table for buttons above tech tree
+        if (Vars.ui.planet.sectorTop == null) return;
+        
+        // Remove existing to avoid duplicates if timer runs repeatedly
+        Vars.ui.planet.sectorTop.clearChildren();
+        
         Vars.ui.planet.sectorTop.row();
         Vars.ui.planet.sectorTop.button("Host Campaign", () -> {
             BaseDialog d = new BaseDialog("Host Campaign Settings");
