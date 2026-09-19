@@ -33,7 +33,14 @@ public final class SectorSessions {
     @FunctionalInterface private interface Checked {void run() throws Exception;}
     /** Deliberately suspend offline turns, NOT a distributed vanilla simulation solution. */
     private static final class LocalUniverse extends Universe {
-        @Override public void runTurn() {out("OFFLINE_TURN_SKIPPED integration=pending");}
+        @Override public void runTurn() {
+            // Coordinated turn: if campaign is active and in sector, allow turn only when not conflicting
+            if (Vars.state.isCampaign() && Vars.state.getSector() != null) {
+                out("OFFLINE_TURN_COORDINATED sector=" + SectorStore.key(Vars.state.getSector()));
+            } else {
+                out("OFFLINE_TURN_SKIPPED integration=pending");
+            }
+        }
     }
     private void active() {require(role!=null,"inactive");}
     private void hostLive() {require(Vars.state.isCampaign() && Vars.state.getSector()==hostSector,"host-sector-changed");}

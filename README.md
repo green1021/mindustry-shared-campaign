@@ -4,10 +4,11 @@
 
 ## Features & Implementation Status
 1. **Host-Authoritative Multi-Engine Execution:** Simultaneous independent game engines running distinct sectors of the Serpulo campaign.
-2. **ArcNet Loopback & Remote Protocol (SC5):** Host/guest session handshakes, exclusive sector ownership with `.lease` guards, and isolated `.msav` saves.
+2. **ArcNet Loopback & Remote Protocol (SC5):** Host/guest session handshakes, exclusive sector ownership with `.lease` guards, isolated `.msav` saves, and configurable remote IP target (`sc.remote.host`).
 3. **Atomic Research System:** Real TechTree synchronization with host-side resource verification, parent requirement validation, and atomic core deductions.
 4. **Resource Transfer & Real-Time Status:** Atomic item transfer (`TRANSFER`) and core inventory observation (`STATUS`).
-5. **Client UI Integration:** `SharedCampaignUI` dialog hooks for non-headless desktop client interaction.
+5. **Coordinated Offline Simulation:** Non-conflicting per-sector turn execution replacing unsafe blanket suspension.
+6. **Client UI Integration:** `SharedCampaignUI` dialog hooks for non-headless desktop client interaction.
 
 ## Verification & Test Suite
 ```sh

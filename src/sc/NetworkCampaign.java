@@ -73,7 +73,8 @@ public final class NetworkCampaign {
                 Vars.net.host(port);
                 out("LISTEN address=127.0.0.1 port="+port+" active="+Vars.net.active());
             } else {
-                Vars.net.connect("127.0.0.1", port, () -> out("CONNECT_CALLBACK active="+Vars.net.active()));
+                String hostIp = System.getProperty("sc.remote.host", "127.0.0.1");
+                Vars.net.connect(hostIp, port, () -> out("CONNECT_CALLBACK active="+Vars.net.active()));
             }
         }));
         h.register("sc-m5-state", "Query real engine net flags.", a -> dispatch(() ->
