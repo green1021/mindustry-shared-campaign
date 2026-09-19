@@ -22,6 +22,29 @@ public final class SharedCampaignUI {
             }
         }, 1.0f);
 
+        // 2. Add "Host Campaign" to Planet Dialog (Above Tech Tree)
+        if (Vars.ui != null && Vars.ui.planet != null) {
+            Vars.ui.planet.shown(() -> {
+                Vars.ui.planet.cont.row();
+                Vars.ui.planet.cont.button("Host Campaign", () -> {
+                    BaseDialog d = new BaseDialog("Host Campaign Settings");
+                    var port1Field = new arc.scene.ui.TextField("6567");
+                    var port2Field = new arc.scene.ui.TextField("6568");
+                    d.cont.add("Sync Port:").pad(5f);
+                    d.cont.add(port1Field).width(100f).row();
+                    d.cont.add("Sector Port:").pad(5f);
+                    d.cont.add(port2Field).width(100f).row();
+                    d.cont.button("Host", () -> {
+                        d.hide();
+                        Log.info("SC_HOST_INIT p1=" + port1Field.getText() + " p2=" + port2Field.getText());
+                    }).size(100f, 50f);
+                    d.addCloseButton();
+                    d.show();
+                }).size(200f, 50f).pad(10f);
+            });
+            Log.info("SC_UI_PLANET_HOOK_OK");
+        }
+
         buildDialog();
     }
 
