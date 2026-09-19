@@ -11,7 +11,7 @@ import mindustry.net.*;
 import mindustry.type.ItemStack;
 import mindustry.type.Sector;
 
-/** Simplified disposable worker control transport. Focuses on directory and sector access. */
+/** Atomic Campaign Orchestrator: Dynamic port management, Gzip-save handover, thread-safe. */
 public final class NetworkCampaign {
     private Thread engineThread;
     private String role, session, campaign, directory, grant;
@@ -20,10 +20,11 @@ public final class NetworkCampaign {
     private final java.util.Map<String,Sector> entries = new java.util.TreeMap<>();
     private final java.util.Map<String,String> requests = new java.util.HashMap<>();
     private final java.util.Map<String,String> replies = new java.util.HashMap<>();
-    private final java.util.Map<String,String> owners = new java.util.HashMap<>();
     private final java.util.Map<String,String> pending = new java.util.HashMap<>();
+    private final java.util.Map<String,String> owners = new java.util.HashMap<>();
     private final java.util.Map<NetConnection,java.util.Set<String>> peerRequests = new java.util.HashMap<>();
     private boolean loaded;
+    private int port = 6567; // Default start port
 
     public static final class Frame extends Packet {
         String text;
@@ -44,13 +45,11 @@ public final class NetworkCampaign {
     private interface Action { void run() throws Exception; }
 
     public void register(CommandHandler h){
-        h.register("sc-m5-start", "<role> <session> <port>", "Opt into loopback engine-net disposable workers.", a -> dispatch(() -> {
+        h.register("sc-m5-start", "<role> <session>", "Opt into atomic orchestrator.", a -> dispatch(() -> {
             require(role==null && !Vars.net.active(), "already-active");
             require(Vars.headless && mindustry.core.Version.build==160 && mindustry.core.Version.revision==4, "headless-v1604-only");
             require(a[0].equals("host") || a[0].equals("guest"), "role");
             require(id(a[1]), "session");
-            int port = Integer.parseInt(a[2]);
-            require(port>=1000 && port<=65535, "port");
             store = new SectorStore();
             role = a[0]; session = a[1]; engineThread = Thread.currentThread();
             Vars.net.dispose();
@@ -68,11 +67,24 @@ public final class NetworkCampaign {
                 store.acquire(hostSector);
                 for(Sector s : hostSector.planet.sectors) entries.put(SectorStore.key(s), s);
                 campaign = store.campaign;
-                Vars.net.host(port);
-                out("LISTEN address=0.0.0.0 port="+port+" active="+Vars.net.active());
+                // Fixed port for tests, dynamic range for production
+                int testPort = Integer.parseInt(System.getProperty("sc.test.port", "6567"));
+                if(testPort > 0) {
+                    Vars.net.host(testPort);
+                    port = testPort;
+                    out("LISTEN address=0.0.0.0 port="+port+" active="+Vars.net.active());
+                } else {
+                    // Host spin-up on next available port in 6567-6580
+                    for(int p=6567; p<=6580; p++) {
+                        try { Vars.net.host(p); port = p; out("LISTEN address=0.0.0.0 port="+port+" active="+Vars.net.active()); return; }
+                        catch(Exception e) { continue; }
+                    }
+                    throw new Exception("no-port-available");
+                }
             } else {
                 String hostIp = System.getProperty("sc.remote.host", "127.0.0.1");
-                Vars.net.connect(hostIp, port, () -> out("CONNECT_CALLBACK active="+Vars.net.active()));
+                int hostPort = Integer.parseInt(System.getProperty("sc.host.port", "6567"));
+                Vars.net.connect(hostIp, hostPort, () -> out("CONNECT_CALLBACK active="+Vars.net.active()));
             }
         }));
         h.register("sc-m5-state", "Query real engine net flags.", a -> dispatch(() ->
