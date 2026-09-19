@@ -22,28 +22,13 @@ public final class SharedCampaignUI {
             }
         }, 1.0f);
 
-        // 2. Add "Host Campaign" to Planet Dialog (Above Tech Tree)
-        if (Vars.ui != null && Vars.ui.planet != null) {
-            Vars.ui.planet.shown(() -> {
-                Vars.ui.planet.cont.row();
-                Vars.ui.planet.cont.button("Host Campaign", () -> {
-                    BaseDialog d = new BaseDialog("Host Campaign Settings");
-                    var port1Field = new arc.scene.ui.TextField("6567");
-                    var port2Field = new arc.scene.ui.TextField("6568");
-                    d.cont.add("Sync Port:").pad(5f);
-                    d.cont.add(port1Field).width(100f).row();
-                    d.cont.add("Sector Port:").pad(5f);
-                    d.cont.add(port2Field).width(100f).row();
-                    d.cont.button("Host", () -> {
-                        d.hide();
-                        Log.info("SC_HOST_INIT p1=" + port1Field.getText() + " p2=" + port2Field.getText());
-                    }).size(100f, 50f);
-                    d.addCloseButton();
-                    d.show();
-                }).size(200f, 50f).pad(10f);
-            });
-            Log.info("SC_UI_PLANET_HOOK_OK");
-        }
+        // 2. Add "Host Campaign" to Planet Dialog - use timer since planet UI is lazy-loaded
+        Timer.schedule(() -> {
+            if (Vars.ui != null && Vars.ui.planet != null) {
+                injectHostCampaignButton();
+                Log.info("SC_UI_PLANET_HOOK_OK");
+            }
+        }, 1.5f);
 
         buildDialog();
     }
@@ -51,27 +36,29 @@ public final class SharedCampaignUI {
     private void injectCampaignButton() {
         JoinDialog join = Vars.ui.join;
         // Add button to the existing buttons table
-        join.buttons.button("Add Campaign", () -> {
-            BaseDialog d = new BaseDialog("Add Campaign");
-            var addressField = new arc.scene.ui.TextField("127.0.0.1:6567");
-            d.cont.add("Address (IP:Port):").pad(10f).row();
-            d.cont.add(addressField).width(300f).pad(10f).row();
-            d.cont.button("OK", () -> {
-                String addr = addressField.getText();
+        join.buttons.button("Connect", () -> {
+            // Placeholder - functionality to be added later
+            Log.info("SC_CONNECT_PLACEHOLDER");
+        }).size(180f, 50f);
+    }
+
+    private void injectHostCampaignButton() {
+        Vars.ui.planet.cont.row();
+        Vars.ui.planet.cont.button("Host Campaign", () -> {
+            BaseDialog d = new BaseDialog("Host Campaign Settings");
+            var port1Field = new arc.scene.ui.TextField("6567");
+            var port2Field = new arc.scene.ui.TextField("6568");
+            d.cont.add("Sync Port:").pad(5f);
+            d.cont.add(port1Field).width(100f).row();
+            d.cont.add("Sector Port:").pad(5f);
+            d.cont.add(port2Field).width(100f).row();
+            d.cont.button("Host", () -> {
                 d.hide();
-                sc.CampaignInventory.savedCampaignServers.add(addr);
-                // Refresh JoinDialog using reflection to call private setup()
-                try {
-                    Method m = JoinDialog.class.getDeclaredMethod("setup");
-                    m.setAccessible(true);
-                    m.invoke(join);
-                } catch (Exception ex) {
-                    Log.err("SC_REFRESH_FAIL", ex);
-                }
+                Log.info("SC_HOST_INIT p1=" + port1Field.getText() + " p2=" + port2Field.getText());
             }).size(100f, 50f);
             d.addCloseButton();
             d.show();
-        }).size(180f, 50f);
+        }).size(200f, 50f).pad(10f);
     }
 
     private void buildDialog() {
