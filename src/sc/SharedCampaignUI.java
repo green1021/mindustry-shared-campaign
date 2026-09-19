@@ -1,40 +1,37 @@
 package sc;
 
 import arc.Core;
+import arc.Events;
 import arc.util.Log;
 import arc.util.Timer;
 import mindustry.Vars;
+import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.ui.dialogs.BaseDialog;
 import mindustry.ui.dialogs.JoinDialog;
 import mindustry.graphics.Pal;
-import java.lang.reflect.Method;
 
 public final class SharedCampaignUI {
 
     public void init() {
         if (Vars.headless) return;
 
-        // Use timer to ensure JoinDialog is fully initialized, then inject button
         Timer.schedule(() -> {
             if (Vars.ui != null && Vars.ui.join != null) {
-                injectCampaignButton();
-                Log.info("SC_UI_JOIN_BUTTON_INJECTED");
+                injectConnectButton();
             }
         }, 1.0f);
 
-        // 2. Add "Host Campaign" to Planet Dialog - recurring check since planet UI is recreated each time
+        // Fallback: Check for PlanetDialog every 2s
         Timer.schedule(() -> {
-            if (Vars.ui != null && Vars.ui.planet != null) {
-                Core.app.post(() -> {
-                    injectHostCampaignButton();
-                });
+            if (Vars.ui != null && Vars.ui.planet != null && Vars.ui.planet.sectorTop != null && Vars.ui.planet.sectorTop.getChildren().size == 0) {
+                 injectHostButton();
             }
-        }, 1.5f, 2.0f); // Check every 2 seconds
+        }, 2.0f, 2.0f);
 
         buildDialog();
     }
 
-    private void injectCampaignButton() {
+    private void injectConnectButton() {
         JoinDialog join = Vars.ui.join;
         join.buttons.button("Connect", () -> {
             BaseDialog d = new BaseDialog("Connect to Online Campaign");
@@ -42,7 +39,6 @@ public final class SharedCampaignUI {
             d.cont.add("Address (IP:Port):").pad(10f).row();
             d.cont.add(addressField).width(300f).pad(10f).row();
             d.cont.button("Connect", () -> {
-                // Placeholder - functionality to be added later
                 Log.info("SC_CONNECT_PLACEHOLDER addr=" + addressField.getText());
             }).size(120f, 50f);
             d.addCloseButton();
@@ -50,12 +46,7 @@ public final class SharedCampaignUI {
         }).size(180f, 50f);
     }
 
-    private void injectHostCampaignButton() {
-        if (Vars.ui.planet.sectorTop == null) return;
-        
-        // Remove existing to avoid duplicates if timer runs repeatedly
-        Vars.ui.planet.sectorTop.clearChildren();
-        
+    private void injectHostButton() {
         Vars.ui.planet.sectorTop.row();
         Vars.ui.planet.sectorTop.button("Host Campaign", () -> {
             BaseDialog d = new BaseDialog("Host Campaign Settings");
@@ -77,7 +68,6 @@ public final class SharedCampaignUI {
     private void buildDialog() {
         BaseDialog dialog = new BaseDialog("Shared Campaign");
         dialog.addCloseButton();
-
         dialog.cont.add("Atomic Campaign Orchestrator").row();
         dialog.cont.image().color(Pal.accent).fillX().height(3f).pad(4f).row();
         dialog.cont.add("Player Present Status: [green]ONLINE[]").pad(10f).row();
@@ -91,17 +81,9 @@ public final class SharedCampaignUI {
                     Vars.net.connect(ip, port, () -> Log.info("SC_CONNECTED_SUCCESS"));
                 });
             }).size(220f, 50f).pad(6f).row();
-
             t.button("Request Sector List", () -> {
                 Vars.net.send(new sc.NetworkCampaign.Frame("SC5|1|session-m5|ui-list|LIST"), true);
             }).size(220f, 50f).pad(6f).row();
         }).pad(10f).row();
-
-        if (Vars.ui != null && Vars.ui.paused != null) {
-            Vars.ui.paused.shown(() -> {
-                Vars.ui.paused.cont.row();
-                Vars.ui.paused.cont.button("Shared Campaign", dialog::show).size(220f, 50f);
-            });
-        }
     }
 }
