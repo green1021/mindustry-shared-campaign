@@ -92,8 +92,9 @@ public final class NetworkCampaign {
             boolean research = f[4].equals("RESEARCH");
             boolean status = f[4].equals("STATUS");
             boolean transfer = f[4].equals("TRANSFER");
-            require(list || ping || research || status || transfer || f[4].equals("SELECT"), "type");
-            require(f.length==((list || ping || status)?5:(research?6:(transfer?7:8))), "shape");
+            boolean launch = f[4].equals("LAUNCH");
+            require(list || ping || research || status || transfer || launch || f[4].equals("SELECT"), "type");
+            require(f.length==((list || ping || status)?5:(research?6:(transfer?7:(launch?8:8)))), "shape");
             String old = pending.get(f[3]);
             require(old==null || old.equals(a[0]), "conflict");
             require(pending.size()<256 || old!=null, "capacity");
@@ -166,6 +167,23 @@ public final class NetworkCampaign {
                 String response = "SC5|1|"+session+"|"+f[3]+"|DIRECTORY|"+campaign+"|"+listing();
                 require(response.length()<=4096, "directory-capacity");
                 reply(c, response);
+                return;
+            }
+            if(f[4].equals("LAUNCH")){
+                require(f.length==8, "shape");
+                // LAUNCH|<campaign>|<planet>|<sector>
+                require(f[5].equals(campaign), "campaign");
+                require(id(f[6]) && f[7].matches("[0-9]{1,6}"), "identifier");
+                String key = f[6]+":"+f[7];
+                Sector s = entries.get(key);
+                require(s!=null, "unknown-sector");
+                require(s!=hostSector, "host-active");
+                require(!owners.containsKey(key), "owned");
+                String nextGrant = "SC5|1|"+session+"|"+f[3]+"|LAUNCH_GRANT|"+campaign+"|"+f[6]+"|"+f[7];
+                store.lease(s, nextGrant);
+                owners.put(key, f[3]); requests.put(f[3], text); replies.put(f[3], nextGrant);
+                reply(c, nextGrant);
+                out("LAUNCH_GRANTED sector="+key+" request="+f[3]);
                 return;
             }
             if(f[4].equals("STATUS")){
@@ -278,6 +296,15 @@ public final class NetworkCampaign {
                 require(f[5].equals(store.campaign), "campaign");
                 campaign = f[5]; directory = f[6]; pending.remove(f[3]);
                 out("DIRECTORY "+directory);
+                out("RX "+text);
+                return;
+            }
+            if(f[4].equals("LAUNCH_GRANT")){
+                require(f.length==8 && expected[4].equals("LAUNCH"), "shape");
+                // Auto-confirm launch if granted
+                // Local sector load handled by UI
+                pending.remove(f[3]);
+                out("LAUNCH_RECEIVED sector="+f[6]+":"+f[7]);
                 out("RX "+text);
                 return;
             }

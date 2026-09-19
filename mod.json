@@ -3,7 +3,7 @@
   "displayName": "Shared Campaign (PC)",
   "author": "green1021",
   "description": "True simultaneous multi-sector PC co-op campaign for Mindustry v160.4.",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "main": "sc.SharedCampaignMod",
   "java": true,
   "minGameVersion": "160.4"

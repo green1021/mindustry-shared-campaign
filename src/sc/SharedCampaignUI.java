@@ -39,8 +39,9 @@ public final class SharedCampaignUI {
                 Log.info("SC_UI_ACTION join-host");
             }).size(220f, 50f).pad(6f);
 
-            t.button("Sector Directory", () -> {
-                Log.info("SC_UI_ACTION sector-directory");
+            t.button("Sector Launch", () -> {
+                Log.info("SC_UI_ACTION launch-sector");
+                // Trigger NetworkCampaign launch protocol
             }).size(220f, 50f).pad(6f).row();
 
             t.button("Research Tree Sync", () -> {
@@ -55,7 +56,8 @@ public final class SharedCampaignUI {
         // Register custom button in campaign / pause menu if ui is ready
         if (Vars.ui != null && Vars.ui.paused != null) {
             Vars.ui.paused.shown(() -> {
-                // Hook ready for in-game dialog trigger
+                Vars.ui.paused.cont.row();
+                Vars.ui.paused.cont.button("Shared Campaign", dialog::show).size(220f, 50f);
             });
         }
     }

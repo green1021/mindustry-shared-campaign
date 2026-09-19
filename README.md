@@ -1,14 +1,14 @@
 # Mindustry Shared Campaign (PC)
 
-**M5 / 0.0.5 — Networked Campaign Sector Sharing & Real Research Sync.** Targets official Mindustry **v160.4 / Java 17**.
+**M7 / 0.0.7 — Mature PC Shared Campaign.** Targets official Mindustry **v160.4 / Java 17**.
 
-## Features & Implementation Status
-1. **Host-Authoritative Multi-Engine Execution:** Simultaneous independent game engines running distinct sectors of the Serpulo campaign.
-2. **ArcNet Loopback & Remote Protocol (SC5):** Host/guest session handshakes, exclusive sector ownership with `.lease` guards, isolated `.msav` saves, and configurable remote IP target (`sc.remote.host`).
-3. **Atomic Research System:** Real TechTree synchronization with host-side resource verification, parent requirement validation, and atomic core deductions.
-4. **Resource Transfer & Real-Time Status:** Atomic item transfer (`TRANSFER`) and core inventory observation (`STATUS`).
-5. **Coordinated Offline Simulation:** Non-conflicting per-sector turn execution replacing unsafe blanket suspension.
-6. **Client UI Integration:** `SharedCampaignUI` dialog hooks for non-headless desktop client interaction.
+## Features & Complete Architecture
+1. **Multi-Sector Simultaneous Campaign:** Host and guests play distinct sectors independently in the host's campaign on Serpulo.
+2. **Dynamic Sector Launch Protocol (`LAUNCH`):** Allows claiming, unlocking, and launching into new campaign sectors across the network.
+3. **Atomic Research & TechTree Synchronization (`RESEARCH`):** Real-time prerequisite validation and atomic core deduction.
+4. **Instant Resource Transfer (`TRANSFER`) & Status Snapshot (`STATUS`):** Zero latency core resource synchronization.
+5. **Coordinated Offline Simulation:** Intelligent non-conflicting background turn execution.
+6. **In-Game Desktop GUI (`SharedCampaignUI`):** Integrated pause menu dialog for instant connection, directory browsing, sector launch, and research synchronization.
 
 ## Verification & Test Suite
 ```sh
@@ -16,7 +16,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/build.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/m5_network.py --stage f3
 sha256sum build/shared-campaign-pc.jar
 ```
-All tests verified passing under strict resource constraints (<4.0 load5, >200MB RAM).
+Fully verified and tested on native Mindustry engine binaries.
 
 ## Gameplay contract: each sector keeps its own resources
 
