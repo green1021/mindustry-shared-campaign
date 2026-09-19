@@ -36,33 +36,18 @@ public final class SharedCampaignUI {
 
         dialog.cont.table(t -> {
             t.button("Join Host Campaign", () -> {
-                // Use built-in UI text input
-                mindustry.Vars.ui.showTextInput("Enter Host IP:Port", "127.0.0.1:41000", 32, "127.0.0.1:41000", s -> {
+                mindustry.Vars.ui.showTextInput("Enter Host IP:Port", "127.0.0.1:6567", 32, "127.0.0.1:6567", s -> {
                     String[] parts = s.split(":");
                     String ip = parts[0];
-                    int port = (parts.length > 1) ? Integer.parseInt(parts[1]) : 41000;
+                    int port = (parts.length > 1) ? Integer.parseInt(parts[1]) : 6567;
                     mindustry.Vars.net.connect(ip, port, () -> Log.info("SC_CONNECTED_SUCCESS"));
                 });
-            }).size(220f, 50f).pad(6f);
+            }).size(220f, 50f).pad(6f).row();
 
-            t.button("Launch Sector", () -> {
-                // Fetch list from host
-                // For simplicity, just request list
+            t.button("Request Sector List", () -> {
                 mindustry.Vars.net.send(new sc.NetworkCampaign.Frame("SC5|1|session-m5|ui-list|LIST"), true);
                 Log.info("SC_UI_ACTION fetch-list");
             }).size(220f, 50f).pad(6f).row();
-
-            t.button("Sync Research", () -> {
-                // Trigger research sync request
-                mindustry.Vars.net.send(new sc.NetworkCampaign.Frame("SC5|1|session-m5|ui-research|RESEARCH|mechanical-drill"), true);
-                Log.info("SC_UI_ACTION research-sync");
-            }).size(220f, 50f).pad(6f);
-
-            t.button("Transfer Copper", () -> {
-                // Request 10 copper
-                mindustry.Vars.net.send(new sc.NetworkCampaign.Frame("SC5|1|session-m5|ui-tx|TRANSFER|copper|10"), true);
-                Log.info("SC_UI_ACTION transfer");
-            }).size(220f, 50f).pad(6f);
         }).pad(10f).row();
 
         // Register custom button in campaign / pause menu if ui is ready
