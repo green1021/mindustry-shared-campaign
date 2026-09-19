@@ -1,10 +1,9 @@
 package sc;
 
 import arc.Core;
-import arc.Events;
 import arc.util.Log;
+import arc.util.Timer;
 import mindustry.Vars;
-import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.ui.dialogs.BaseDialog;
 import mindustry.ui.dialogs.JoinDialog;
 import mindustry.graphics.Pal;
@@ -15,35 +14,41 @@ public final class SharedCampaignUI {
     public void init() {
         if (Vars.headless) return;
 
-        Events.on(ClientLoadEvent.class, e -> {
-            try {
-                // Hook Join Game Dialog: Add "Add Campaign" button
-                if (Vars.ui != null && Vars.ui.join != null) {
-                    Vars.ui.join.buttons.button("Add Campaign", () -> {
-                        BaseDialog d = new BaseDialog("Add Campaign");
-                        var addressField = new arc.scene.ui.TextField("127.0.0.1:6567");
-                        d.cont.add("Address (IP:Port):").pad(10f).row();
-                        d.cont.add(addressField).width(300f).pad(10f).row();
-                        d.cont.button("OK", () -> {
-                            String addr = addressField.getText();
-                            d.hide();
-                            sc.CampaignInventory.savedCampaignServers.add(addr);
-                            try {
-                                Method m = Vars.ui.join.getClass().getSuperclass().getDeclaredMethod("setup");
-                                m.setAccessible(true);
-                                m.invoke(Vars.ui.join);
-                            } catch (Exception ex) {
-                                Log.err("SC_REFRESH_FAIL", ex);
-                            }
-                        }).size(100f, 50f);
-                        d.addCloseButton();
-                        d.show();
-                    }).size(180f, 50f);
+        // Use timer to ensure JoinDialog is fully initialized, then inject button
+        Timer.schedule(() -> {
+            if (Vars.ui != null && Vars.ui.join != null) {
+                injectCampaignButton();
+                Log.info("SC_UI_JOIN_BUTTON_INJECTED");
+            }
+        }, 1.0f);
+
+        buildDialog();
+    }
+
+    private void injectCampaignButton() {
+        JoinDialog join = Vars.ui.join;
+        // Add button to the existing buttons table
+        join.buttons.button("Add Campaign", () -> {
+            BaseDialog d = new BaseDialog("Add Campaign");
+            var addressField = new arc.scene.ui.TextField("127.0.0.1:6567");
+            d.cont.add("Address (IP:Port):").pad(10f).row();
+            d.cont.add(addressField).width(300f).pad(10f).row();
+            d.cont.button("OK", () -> {
+                String addr = addressField.getText();
+                d.hide();
+                sc.CampaignInventory.savedCampaignServers.add(addr);
+                // Refresh JoinDialog using reflection to call private setup()
+                try {
+                    Method m = JoinDialog.class.getDeclaredMethod("setup");
+                    m.setAccessible(true);
+                    m.invoke(join);
+                } catch (Exception ex) {
+                    Log.err("SC_REFRESH_FAIL", ex);
                 }
-                
-                buildDialog();
-            } catch (Throwable t) { Log.err("SC_UI_INIT_FAIL", t); }
-        });
+            }).size(100f, 50f);
+            d.addCloseButton();
+            d.show();
+        }).size(180f, 50f);
     }
 
     private void buildDialog() {
