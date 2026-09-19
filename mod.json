@@ -2,9 +2,9 @@
   "name": "shared-campaign-pc",
   "displayName": "Shared Campaign (PC)",
   "author": "green1021",
-  "description": "True simultaneous multi-sector PC co-op campaign for Mindustry v160.4.",
-  "version": "0.0.7",
+  "description": "Shared Campaign PC v0.0.11: Atomic Orchestration. Seamless co-op flow, UI hooks for Main Menu/Planet map. Force-refresh enabled.",
+  "version": "0.0.11",
   "main": "sc.SharedCampaignMod",
   "java": true,
-  "minGameVersion": "160.4"
+  "minGameVersion": "160"
 }
