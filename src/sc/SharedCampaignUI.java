@@ -15,24 +15,37 @@ public final class SharedCampaignUI {
 
         Events.on(ClientLoadEvent.class, e -> {
             try {
-                // 1. Hook Main Menu: Add "Campaign Online"
-                if (Vars.ui != null && Vars.ui.menufrag != null) {
-                    Vars.ui.menufrag.addButton("Campaign Online", () -> {
-                        BaseDialog d = new BaseDialog("Shared Campaign Online");
-                        d.cont.add("Shared Campaign Management").pad(10f).row();
-                        d.cont.button("Host Campaign", () -> {
-                            // Host logic
-                            Log.info("SC_UI_HOST_INIT");
-                        }).size(200f, 50f).row();
-                        d.cont.button("Join Campaign", () -> {
-                            Vars.ui.showTextInput("Enter Host IP", "127.0.0.1", 32, "127.0.0.1", s -> {
-                                Log.info("SC_UI_JOIN_ATTEMPT target=" + s);
+                // 1. Hook Join Game Dialog: Add "Add Campaign Server" button
+                if (Vars.ui != null && Vars.ui.join != null) {
+                    Vars.ui.join.buttons.button("Add Campaign", () -> {
+                        BaseDialog d = new BaseDialog("Add Campaign Server");
+                        d.cont.add("Enter Campaign Server Details").pad(10f).row();
+                        
+                        var ipField = new arc.scene.ui.TextField("127.0.0.1");
+                        var portField = new arc.scene.ui.TextField("6567");
+                        
+                        d.cont.table(t -> {
+                            t.add("IP: ").pad(5f);
+                            t.add(ipField).width(200f).pad(5f).row();
+                            t.add("Port: ").pad(5f);
+                            t.add(portField).width(200f).pad(5f).row();
+                        }).pad(10f).row();
+
+                        d.cont.button("Connect", () -> {
+                            String ip = ipField.getText();
+                            int port = Integer.parseInt(portField.getText());
+                            d.hide();
+                            Log.info("SC_CAMPAIGN_SERVER_CONNECT target=" + ip + ":" + port);
+                            // Custom campaign connection handshake
+                            mindustry.Vars.net.connect(ip, port, () -> {
+                                Log.info("SC_CAMPAIGN_CONNECTED");
                             });
-                        }).size(200f, 50f).row();
+                        }).size(150f, 45f).pad(5f);
+
                         d.addCloseButton();
                         d.show();
-                    });
-                    Log.info("SC_UI_MAIN_MENU_HOOK_OK");
+                    }).size(180f, 50f);
+                    Log.info("SC_UI_JOIN_DIALOG_HOOK_OK");
                 }
                 
                 buildDialog();
