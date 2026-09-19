@@ -6,7 +6,9 @@ import arc.util.Log;
 import mindustry.Vars;
 import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.ui.dialogs.BaseDialog;
+import mindustry.ui.dialogs.JoinDialog;
 import mindustry.graphics.Pal;
+import java.lang.reflect.Method;
 
 public final class SharedCampaignUI {
 
@@ -15,6 +17,7 @@ public final class SharedCampaignUI {
 
         Events.on(ClientLoadEvent.class, e -> {
             try {
+                // Hook Join Game Dialog: Add "Add Campaign" button
                 if (Vars.ui != null && Vars.ui.join != null) {
                     Vars.ui.join.buttons.button("Add Campaign", () -> {
                         BaseDialog d = new BaseDialog("Add Campaign");
@@ -24,11 +27,9 @@ public final class SharedCampaignUI {
                         d.cont.button("OK", () -> {
                             String addr = addressField.getText();
                             d.hide();
-                            // Add to persistent list
                             sc.CampaignInventory.savedCampaignServers.add(addr);
-                            // Refresh JoinDialog using reflection to call private setup()
                             try {
-                                java.lang.reflect.Method m = Vars.ui.join.getClass().getDeclaredMethod("setup");
+                                Method m = Vars.ui.join.getClass().getSuperclass().getDeclaredMethod("setup");
                                 m.setAccessible(true);
                                 m.invoke(Vars.ui.join);
                             } catch (Exception ex) {
@@ -39,6 +40,7 @@ public final class SharedCampaignUI {
                         d.show();
                     }).size(180f, 50f);
                 }
+                
                 buildDialog();
             } catch (Throwable t) { Log.err("SC_UI_INIT_FAIL", t); }
         });
