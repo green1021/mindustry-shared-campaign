@@ -23,6 +23,10 @@ public class AcoP2Manager {
         }
     }
 
+    public boolean isActive() {
+        return active;
+    }
+
     public void stopP2() {
         if (!active) return;
         Log.info("ACO_P2_STOP");
