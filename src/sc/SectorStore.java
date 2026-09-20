@@ -82,7 +82,7 @@ public final class SectorStore {
         if(writerLock==null) {writerChannel.close();throw new IllegalArgumentException("writer-live");}
         writerSector=s;
     }
-    void open(Sector s, String grant) throws IOException {
+    public void open(Sector s, String grant) throws IOException {
         require(Vars.state.isMenu(), "world-live");
         checkLease(s,grant);
         require(eligible(s), "ineligible");
@@ -100,7 +100,7 @@ public final class SectorStore {
         // Resume a save, do NOT call Logic.play(): it clears cores to starting loadout.
         Vars.state.set(mindustry.core.GameState.State.playing);
     }
-    String save(Sector s) throws Exception {
+    public String save(Sector s) throws Exception {
         require(writerLock!=null && writerLock.isValid() && writerSector==s, "not-owner");
         require(Vars.state.isCampaign() && Vars.state.getSector()==s && Vars.state.rules.defaultTeam.core()!=null, "world-changed");
         Path destination=file(s,".msav");
@@ -109,7 +109,9 @@ public final class SectorStore {
         try {
             s.info.prepare(s);
             SaveOptions options=new SaveOptions();
-            options.extraTags=StringMap.of("sc-sector-info",JsonIO.write(s.info),"sc-campaign",campaign);
+            // Store revision version in save metadata via tags
+            long revision = getNextRevisionVersion(s);
+            options.extraTags=StringMap.of("sc-sector-info",JsonIO.write(s.info),"sc-campaign",campaign,"sc-revision",String.valueOf(revision));
             SaveIO.write(new Fi(temp.toFile()),options);
             SaveMeta m=SaveIO.getMeta(new Fi(temp.toFile()));
             require(m.rules.sector==s && "false".equals(m.tags.get("nocores")), "save-validation");
@@ -117,8 +119,20 @@ public final class SectorStore {
             noLinks(destination);
             Files.move(temp,destination,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
             String hash=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(destination)));
-            return "sector="+key(s)+" bytes="+Files.size(destination)+" sha256="+hash+" api=SaveIO.write atomic=true";
+            return "sector="+key(s)+" bytes="+Files.size(destination)+" sha256="+hash+" api=SaveIO.write atomic=true revision="+revision;
         } finally {Files.deleteIfExists(temp);}
+    }
+
+    private long getNextRevisionVersion(Sector s) {
+        // Read current revision from existing save, increment
+        SaveMeta m = meta(s);
+        if (m != null) {
+            String rev = m.tags.get("sc-revision");
+            if (rev != null) {
+                try { return Long.parseLong(rev) + 1; } catch (NumberFormatException ignored) {}
+            }
+        }
+        return 1;
     }
     void lease(Sector s, String grant) throws IOException {
         // Durable admission record; rewritten per new lease after RELEASED. Content-checked on open.

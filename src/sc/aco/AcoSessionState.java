@@ -1,0 +1,19 @@
+package sc.aco;
+
+public enum AcoSessionState {
+    IDLE,
+    PREPARING,
+    SAVING_SOURCE,
+    STOPPING_P2,
+    LOADING_TARGET,
+    STARTING_P2,
+    ANNOUNCING,
+    WAITING_FOR_GUEST,
+    COMPLETED,
+    FAILED,
+    CONNECTING,
+    AUTHENTICATING,
+    ESTABLISHED,
+    CLOSING,
+    CLOSED
+}
