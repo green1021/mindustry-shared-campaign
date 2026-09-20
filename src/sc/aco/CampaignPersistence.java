@@ -15,6 +15,11 @@ public class CampaignPersistence {
     public CampaignPersistence(Path root) {
         this.stateFile = root.resolve("campaign.json");
         this.logFile = root.resolve("transaction_log.jsonl");
+        try {
+            Files.createDirectories(root);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create persistence directory", e);
+        }
     }
 
     public void save(GlobalCampaignState state) throws IOException {

@@ -29,7 +29,10 @@ public class GameplayAdapter {
     }
 
     // Production-ready hook for resource events
-    public void requestWithdrawal(Item item, int amount, String opId) {
+    public void requestWithdrawal(Item item, long amount, String opId) {
+        if (item == null) {
+            throw new IllegalArgumentException("Withdrawal item cannot be null");
+        }
         // Enforce P2 boundary: Mutation is REQUEST, not local modification
         client.sendGlobalResourceRequest(item.name, amount, opId, "WITHDRAW");
     }

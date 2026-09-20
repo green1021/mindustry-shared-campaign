@@ -17,9 +17,12 @@ def main():
     if CLASSES.exists():
         shutil.rmtree(CLASSES)
     CLASSES.mkdir(parents=True)
-    run(['nice', '-n', '10', 'javac', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
-         '--release', '17', '-cp', str(ENGINE), '-d', str(CLASSES),
-         str(ROOT / 'src/sc/SharedCampaignMod.java'), str(ROOT / 'src/sc/StdioLedger.java'), str(ROOT / 'src/sc/CampaignInventory.java'), str(ROOT / 'src/sc/SectorStore.java'), str(ROOT / 'src/sc/SectorSessions.java'), str(ROOT / 'src/sc/NetworkCampaign.java'), str(ROOT / 'src/mindustry/net/LoopbackProvider.java'), str(ROOT / 'src/sc/SharedCampaignUI.java')])
+    java_files = list((ROOT / 'src').glob('**/*.java'))
+    cmd = ['nice', '-n', '10', 'javac', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
+         '--release', '17', '-cp', str(ENGINE), '-d', str(CLASSES)]
+    for f in java_files:
+        cmd.append(str(f))
+    run(cmd)
     run(['nice', '-n', '10', 'jar', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
          '--create', '--no-manifest', '--file', str(JAR),
          '-C', str(CLASSES), 'sc', '-C', str(CLASSES), 'mindustry', '-C', str(ROOT), 'mod.json'])

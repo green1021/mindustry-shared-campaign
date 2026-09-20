@@ -29,15 +29,30 @@ public class AcoServer {
         this.txManager = txManager;
     }
 
+    private ServerSocket serverSocket;
+
     public void start() {
         new Thread(() -> {
-            try (ServerSocket ss = new ServerSocket(port)) {
-                while (running) {
-                    Socket s = ss.accept();
+            try {
+                serverSocket = new ServerSocket(port);
+                while (running && !serverSocket.isClosed()) {
+                    Socket s = serverSocket.accept();
                     ioExecutor.submit(() -> handle(s));
                 }
-            } catch (IOException e) { Log.err("ACO_SERVER_ERROR", e); }
+            } catch (IOException e) {
+                if (running) Log.err("ACO_SERVER_ERROR", e);
+            }
         }).start();
+    }
+
+    public void stop() {
+        running = false;
+        if (serverSocket != null && !serverSocket.isClosed()) {
+            try {
+                serverSocket.close();
+            } catch (IOException ignored) {}
+        }
+        ioExecutor.shutdownNow();
     }
 
     public void registerSession(String sessionId, String campaignId, OutputStream out) {

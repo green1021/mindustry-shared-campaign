@@ -21,7 +21,7 @@ public class AcoClient {
         // Implementation by integration wrapper
     }
 
-    public void sendGlobalResourceRequest(String item, int amount, String opId, String opType) {
+    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType) {
         try {
             // protocol: item|amount|opId|opType
             String payload = item + "|" + amount + "|" + opId + "|" + opType;

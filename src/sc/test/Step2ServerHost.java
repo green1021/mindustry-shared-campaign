@@ -86,11 +86,12 @@ public class Step2ServerHost {
                     
                     // Hook into NetServer packet handlers to see WorldStream
                     Vars.net.handleServer(Packets.WorldStream.class, (con, p) -> {
-                        System.out.println("SERVER_DIAGNOSTIC: WorldStream received by server handler? (Unexpected in standard flow)");
+                        System.out.println("SERVER_DIAGNOSTIC: WorldStream received by server handler.");
                     });
-
-                    Vars.net.handleServer(Packets.Connect.class, (con, packet) -> {
-                        System.out.println("SERVER_DIAGNOSTIC: Received Connect packet.");
+                    
+                    // We also need to check PlayerConnectionConfirmed for acceptance
+                    arc.Events.on(mindustry.game.EventType.PlayerConnectionConfirmed.class, event -> {
+                        System.out.println("SERVER_DIAGNOSTIC: Player accepted.");
                     });
 
                 } catch (Exception e) {

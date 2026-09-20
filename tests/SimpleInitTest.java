@@ -1,3 +1,5 @@
+package tests;
+
 import mindustry.Vars;
 import mindustry.core.ContentLoader;
 import mindustry.core.World;
@@ -15,7 +17,7 @@ public class SimpleInitTest {
             Vars.content = new ContentLoader();
             Vars.content.createBaseContent();
             Vars.world = new World();
-            Vars.net = new Net(new mindustry.net.NetworkIO());
+            Vars.net = new Net(new mindustry.net.ArcNetProvider());
             
             Log.info("Content initialized: " + Vars.content.sectors().size);
             System.exit(0);
