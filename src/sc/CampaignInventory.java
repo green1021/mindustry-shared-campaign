@@ -2,7 +2,10 @@ package sc;
 
 import arc.Core;
 import arc.util.CommandHandler;
+import arc.struct.Seq;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import mindustry.Vars;
@@ -10,22 +13,26 @@ import mindustry.content.Items;
 import mindustry.type.Sector;
 import mindustry.world.blocks.storage.CoreBlock.CoreBuild;
 
-/** Ephemeral, explicitly activated campaign reservation. No seeding, research, saves or networking.
- * Trusted local stdin only. The live host core is the ONLY spendable authority.
+/** Explicitly activated campaign reservation. No seeding, research, saves or networking.
+ * Trusted local stdin only. The live host core remains the ONLY spendable authority; the P1
+ * GlobalLedger only journals committed requests so idempotency and revision survive a restart.
+ * Enable durability with -Dsc.m3.ledger=&lt;directory&gt;; otherwise an in-memory ledger is used.
  */
 public final class CampaignInventory {
     private Thread engineThread;
     private String role, session;
     private Sector sector;
     private CoreBuild core;
-    private long revision;
+    private GlobalLedger ledger;
     private long cachedRevision = -1;
     private int cachedCopper = -1;
     private String cachedSector = "unknown";
     private final Map<String, String> pending = new HashMap<>();
     private final Map<String, String> requests = new HashMap<>(), replies = new HashMap<>();
+    // Persistent list of saved campaign server addresses (ip:port)
+    public static final Seq<String> savedCampaignServers = new Seq<>();
 
-    public void init() { engineThread = Thread.currentThread(); }
+    public void init() { engineThread = Thread.currentThread(); ledger = GlobalLedger.inMemory(); }
     private static void out(String s) { System.out.println("SC_M3_" + s); }
     private static void require(boolean b, String reason) { if (!b) throw new IllegalArgumentException(reason); }
     private static boolean id(String s) { return s.matches("[A-Za-z0-9_-]{1,64}"); }
@@ -55,6 +62,10 @@ public final class CampaignInventory {
             CoreBuild nextCore = Vars.state.rules.defaultTeam.core();
             require(nextCore != null, "no-core");
             sector = next; core = nextCore; session = a[1]; role = a[0];
+            try { ledger = GlobalLedger.open(ledgerDirectory(session)); }
+            catch (IOException ex) { throw new IllegalArgumentException("ledger"); }
+            if (ledger.durable()) out("LEDGER durable=true records=" + ledger.size() + " revision=" + ledger.revision() +
+                " balance=" + ledger.balance() + " replayed=" + ledger.replayedRecords() + " truncatedBytes=" + ledger.truncatedBytes());
             out("READY role=" + role + " session=" + session + " sector=" + sector.planet.name + ":" + sector.id);
         }));
         commands.register("sc-m3-state", "Query live core; not a synthetic wallet.", a -> dispatch(() -> {
@@ -66,7 +77,7 @@ public final class CampaignInventory {
             }
             live();
             out("STATE role=host sector=" + sector.planet.name + ":" + sector.id +
-                " copper=" + core.items.get(Items.copper) + " revision=" + revision + " authority=core.items");
+                " copper=" + core.items.get(Items.copper) + " revision=" + ledger.revision() + " authority=core.items");
         }));
         commands.register("sc-m3-request", "<request> <planet> <sector> <operation>", "Guest reservation; no price field.", a -> dispatch(() -> {
             require(role != null, "inactive"); require(role.equals("guest"), "role");
@@ -111,23 +122,33 @@ public final class CampaignInventory {
         live();
         require(f[5].equals(sector.planet.name) && f[6].equals(Integer.toString(sector.id)), "sector");
         require(id(f[7]), "identifier");
-        String old = requests.get(f[3]);
-        require(old == null || old.equals(frame), "conflict");
-        if (old != null) { out("FRAME " + replies.get(f[3])); return; }
-        require(requests.size() < 256, "capacity");
+        // Durable idempotency: a replayed request returns the committed answer, never a second debit.
+        GlobalLedger.Txn prior = ledger.find(f[3]);
+        require(prior == null || prior.requestFrame.equals(frame), "conflict");
+        if (prior != null) { out("FRAME " + prior.replyFrame); return; }
+        require(ledger.size() < ledger.capacity(), "capacity");
         // Host-only catalog. These are labelled reservations, NOT vanilla research unlocks.
         require(f[7].equals("reserve-copper") || f[7].equals("reserve-large"), "catalog");
         int cost = f[7].equals("reserve-copper") ? 30 : 80;
         int before = core.items.get(Items.copper);
         require(before >= cost, "funds");
-        core.items.remove(Items.copper, cost);
-        int after = core.items.get(Items.copper);
-        revision++;
+        int after = before - cost;
+        long nextRevision = ledger.revision() + 1;
         String response = "SC3|1|" + session + "|" + f[3] + "|RES|" + sector.planet.name + "|" + sector.id +
-            "|" + f[7] + "|" + revision + "|" + after;
-        requests.put(f[3], frame); replies.put(f[3], response);
+            "|" + f[7] + "|" + nextRevision + "|" + after;
+        // Write-ahead first: the revision and idempotency record are durable before the live debit,
+        // so a crash can at worst under-charge, never double-debit, and revision never resets.
+        try { ledger.commit(f[3], frame, response, nextRevision, after); }
+        catch (IOException ex) { throw new IllegalArgumentException("ledger"); }
+        core.items.remove(Items.copper, cost);
         out("DEBIT request=" + f[3] + " before=" + before + " after=" + after + " cost=" + cost +
             " engineThread=true thread=" + Thread.currentThread().getName());
         out("FRAME " + response);
+    }
+
+    private static Path ledgerDirectory(String session) {
+        String value = System.getProperty("sc.m3.ledger");
+        if (value == null || value.isBlank()) return null;
+        return Path.of(value).toAbsolutePath().normalize().resolve(session);
     }
 }

@@ -71,6 +71,7 @@ class Engine:
                '-Dorg.jline.terminal.dumb.color=false', '-Duser.home='+str(d),
                '-Djava.io.tmpdir='+str(d), '-Dsmoke.root='+str(d),
                '-Dsc.m4.workspace='+str(workspace), '-Dsc.m4.root='+str(workspace/'campaigns'),
+               '-Dsc.test.port=6567', '-Dsc.host.port=6567',
                '-cp', str(BUILD / 'test-classes')+os.pathsep+str(ENGINE), 'fixture.NetworkLauncher']
         self.p = subprocess.Popen(cmd, cwd=d, env=env, stdin=subprocess.PIPE,
                                   stdout=self.f, stderr=subprocess.STDOUT, text=True)
@@ -136,9 +137,8 @@ try:
     host = Engine('host')
     command(host, 'sc-fixture-directory', 'SC_FIXTURE_DIRECTORY ', 18)
     guest = Engine('guest')
-    port = 41000 + os.getpid() % 900
-    command(host, f'sc-m5-start host session-m5 {port}', 'SC_M5_LISTEN ', 6)
-    command(guest, f'sc-m5-start guest session-m5 {port}', 'SC_M5_CONNECTED ', 8)
+    command(host, 'sc-m5-start host session-m5', 'SC_M5_LISTEN ', 6)
+    command(guest, 'sc-m5-start guest session-m5', 'SC_M5_CONNECTED ', 8)
     command(host, 'sc-m5-state', 'SC_M5_STATE role=host active=true server=true client=false')
     command(guest, 'sc-m5-state', 'SC_M5_STATE role=guest active=true server=false client=true')
     guest.send('sc-m5-send SC5|1|session-m5|ping1|PING')
@@ -164,7 +164,7 @@ try:
         record['children'][children.index(guest)]['exit']=guest.p.returncode
         host.wait('SC_M5_RELEASED sector=serpulo:64',8)
         replacement=Engine('replacement')
-        command(replacement,f'sc-m5-start guest session-m5 {port}','SC_M5_CONNECTED ',8)
+        command(replacement,'sc-m5-start guest session-m5','SC_M5_CONNECTED ',8)
         request(replacement,'newowner','SELECT|campaign-fixture|serpulo|64','GRANT|campaign-fixture|serpulo|64')
         command(replacement,'sc-m5-open','SC_M5_OPENED ',18)
         record['guest_reloaded']=world(replacement,64,53)

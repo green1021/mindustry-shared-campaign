@@ -52,6 +52,13 @@ public final class CampaignLauncher {
                 core.items.set(Items.copper, 100);
                 System.out.println("SC_FIXTURE_SEEDED testOnly=true before=" + before + " after=" + core.items.get(Items.copper));
             });
+            ServerControl.instance.handler.register("sc-fixture-set-copper", "<amount>", "TEST ONLY: set real core copper to an explicit value.", values -> {
+                var core = Vars.state.rules.defaultTeam.core();
+                if (!Vars.state.isCampaign() || core == null) throw new IllegalStateException("No campaign core");
+                int amount = Integer.parseInt(values[0]);
+                core.items.set(Items.copper, amount);
+                System.out.println("SC_FIXTURE_SET copper=" + core.items.get(Items.copper));
+            });
             ServerControl.instance.handler.register("sc-fixture-campaign-state", "Direct engine campaign/core query.", values -> {
                 Sector s = Vars.state.getSector();
                 var core = Vars.state.rules.defaultTeam.core();

@@ -21,7 +21,7 @@ from resources import check, run, stop
 parser = argparse.ArgumentParser()
 parser.add_argument('--jar', default='build/shared-campaign-pc.jar')
 parser.add_argument('--label', default='m3')
-parser.add_argument('--stage', choices=['f1', 'f2', 'f3'], default='f3')
+parser.add_argument('--stage', choices=['f1', 'f2', 'f3', 'f4'], default='f3')
 parser.add_argument('--two-sectors', action='store_true', help='Load bundled Frozen Forest in guest; never seed/copy host inventory')
 parser.add_argument('--baseline', action='store_true', help='Use pre-F1 launcher for expected RED')
 args = parser.parse_args()
@@ -32,7 +32,7 @@ ENGINE = Path('/opt/mindustry/server-release.jar')
 jar = (ROOT / args.jar).resolve()
 assert jar.is_relative_to(BUILD)
 start = time.monotonic()
-deadline = start + 80  # includes compile/startup/exchange; cleanup <=4 seconds per owned child (two maximum)
+deadline = start + (150 if args.stage == 'f4' else 80)  # f4 restarts the host; cleanup <=4 seconds per owned child (three maximum)
 record = dict(passed=False, scope='real campaign/core inventory; local stdio', stage=args.stage, two_sectors_requested=args.two_sectors,
               children=[], events=[], resources=[])
 children = []
@@ -51,14 +51,18 @@ def monitor():
             raise AssertionError(f'{c.name} unexpectedly exited {c.p.returncode}')
 
 class Engine:
-    def __init__(self, name):
+    def __init__(self, name, reuse=None):
         monitor()
         self.name, self.stopped, self.cursor = name, False, 0
-        temp = tempfile.TemporaryDirectory(prefix='m3-'+name+'-', dir=BUILD)
-        temps.append(temp)
-        d = Path(temp.name)
+        if reuse is None:
+            temp = tempfile.TemporaryDirectory(prefix='m3-'+name+'-', dir=BUILD)
+            temps.append(temp)
+            d = Path(temp.name)
+        else:
+            d = Path(reuse)
+        self.dir = d
         mods = d / 'config/mods'
-        mods.mkdir(parents=True)
+        mods.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(jar, mods / jar.name)
         digest = hashlib.sha256((mods / jar.name).read_bytes()).hexdigest()
         self.log = BUILD / f'{args.label}-{name}.log'
@@ -73,6 +77,8 @@ class Engine:
                '-Dorg.jline.terminal.dumb.color=false', '-Duser.home='+str(d),
                '-Djava.io.tmpdir='+str(d), '-Dsmoke.root='+str(d),
                '-cp', str(BUILD / 'test-classes')+os.pathsep+str(ENGINE), 'fixture.SmokeLauncher' if args.baseline else 'fixture.CampaignLauncher']
+        if args.stage == 'f4':
+            cmd.insert(len(cmd) - 1, '-Dsc.m3.ledger=' + str(d / 'ledger'))
         self.p = subprocess.Popen(cmd, cwd=d, env=env, stdin=subprocess.PIPE,
                                   stdout=self.f, stderr=subprocess.STDOUT, text=True)
         children.append(self)
@@ -156,7 +162,7 @@ try:
     assert int(after['updateId']) > int(before['updateId'])
     record['worlds'] = dict(before=before, after=after)
     record['f1'] = True
-    if args.stage in ('f2', 'f3'):
+    if args.stage in ('f2', 'f3', 'f4'):
         host.send('sc-m3-start host session-m3')
         host.wait('SC_M3_READY role=host session=session-m3 sector=serpulo:170')
         host.send('sc-fixture-seed')
@@ -193,6 +199,43 @@ try:
             assert 'SC_M3_FRAME ' not in host.log.read_text()[offset:]
             record.setdefault('negative_checks', []).append(dict(reason=reason, frame=frame))
         record['f2'] = dict(request=request, response=response, before=100, after=int(world(host)['copper']), negatives=len(bad))
+    if args.stage == 'f4':
+        # Durable P1 bank: kill the host after it commits r1, restart it, and retry the same request.
+        # The committed reply must return with no second debit, and revision must continue, not reset.
+        assert world(host)['copper'] == '70'
+        session_ledger = host.dir / 'ledger' / 'session-m3'
+        assert session_ledger.is_dir(), 'host must have written a durable ledger'
+        host.terminate()
+        host.p.stdin.close()
+        host.f.close()
+        restarted = Engine('host2', reuse=host.dir)
+        restarted.send('sc-fixture-campaign-load')
+        restarted.wait('SC_CAMPAIGN_LOADED ', timeout=18)
+        restarted.send('sc-m3-start host session-m3')
+        recovered = restarted.wait('SC_M3_LEDGER ')
+        assert 'durable=true' in recovered and 'records=1' in recovered and 'revision=1' in recovered and 'replayed=1' in recovered, recovered
+        restarted.wait('SC_M3_READY role=host session=session-m3 sector=serpulo:170')
+        # Simulate the debited core having been persisted before the crash.
+        restarted.send('sc-fixture-set-copper 70')
+        restarted.wait('SC_FIXTURE_SET copper=70')
+        assert world(restarted)['copper'] == '70'
+        marker = len(restarted.log.read_text())
+        restarted.send('sc-m3-recv ' + request)
+        replayed = restarted.wait('SC_M3_FRAME ')[len('SC_M3_FRAME '):]
+        assert replayed == response, replayed
+        assert world(restarted)['copper'] == '70'
+        assert 'SC_M3_DEBIT ' not in restarted.log.read_text()[marker:]
+        # A fresh request must keep counting from the recovered revision.
+        request2 = 'SC3|1|session-m3|r2|REQ|serpulo|170|reserve-copper'
+        restarted.send('sc-m3-recv ' + request2)
+        response2 = restarted.wait('SC_M3_FRAME ')[len('SC_M3_FRAME '):]
+        assert response2 == 'SC3|1|session-m3|r2|RES|serpulo|170|reserve-copper|2|40', response2
+        assert world(restarted)['copper'] == '40'
+        restarted.send('sc-m3-recv ' + request2)
+        assert restarted.wait('SC_M3_FRAME ')[len('SC_M3_FRAME '):] == response2
+        assert world(restarted)['copper'] == '40'
+        record['f4'] = dict(recovered=recovered, replayed_reply=replayed, no_double_debit=True,
+                            revision_continued=2, ledger=str(session_ledger))
     if args.stage == 'f3':
         guest = Engine('guest')
         assert guest.p.pid != host.p.pid
