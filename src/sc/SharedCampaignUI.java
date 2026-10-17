@@ -7,10 +7,33 @@ import mindustry.Vars;
 import mindustry.ui.dialogs.BaseDialog;
 import mindustry.ui.dialogs.JoinDialog;
 import mindustry.ui.dialogs.PlanetDialog;
-import mindustry.graphics.Pal;
 import arc.scene.ui.Dialog;
 
 public final class SharedCampaignUI {
+
+    /** Default campaign-authority sync port. */
+    public static final int DEFAULT_SYNC_PORT = 6567;
+    /** Default P2 sector-host port. */
+    public static final int DEFAULT_SECTOR_PORT = 6568;
+
+    private CampaignActions actions = new CampaignActions() {
+        @Override
+        public void hostCampaignAction(int syncPort, int sectorPort) {
+            Log.info("SC_ACTIONS_UNBOUND host sync=@ sector=@", syncPort, sectorPort);
+        }
+
+        @Override
+        public void connectAction(String host, int port) {
+            Log.info("SC_ACTIONS_UNBOUND connect host=@ port=@", host, port);
+        }
+    };
+
+    /** Bind the real ACO control plane (or a test stub). */
+    public void setActions(CampaignActions actions) {
+        if (actions != null) {
+            this.actions = actions;
+        }
+    }
 
     public void init() {
         if (Vars.headless) return;
@@ -25,6 +48,67 @@ public final class SharedCampaignUI {
         }, 1.0f);
     }
 
+    // --- Action routing (headless-testable) ---
+
+    /** Route a "Connect" button press to the ACO seam. Returns true when dispatched. */
+    public boolean connectFromUi(String addressText) {
+        String[] endpoint = parseAddress(addressText, DEFAULT_SYNC_PORT);
+        if (endpoint == null) {
+            Log.warn("SC_CONNECT_INVALID addr=@", addressText);
+            return false;
+        }
+        actions.connectAction(endpoint[0], Integer.parseInt(endpoint[1]));
+        return true;
+    }
+
+    /** Route a "Host Campaign" button press to the ACO seam. Returns true when dispatched. */
+    public boolean hostFromUi(String syncPortText, String sectorPortText) {
+        int sync = parsePort(syncPortText, DEFAULT_SYNC_PORT);
+        int sector = parsePort(sectorPortText, DEFAULT_SECTOR_PORT);
+        actions.hostCampaignAction(sync, sector);
+        return true;
+    }
+
+    /**
+     * Parse "host:port" or bare "host" into {host, port}. Returns null when the
+     * text has no usable host component. A blank port falls back to {@code defaultPort}.
+     */
+    public static String[] parseAddress(String text, int defaultPort) {
+        if (text == null) return null;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) return null;
+
+        String host = trimmed;
+        String port = String.valueOf(defaultPort);
+
+        int colon = trimmed.lastIndexOf(':');
+        if (colon >= 0) {
+            host = trimmed.substring(0, colon).trim();
+            String tail = trimmed.substring(colon + 1).trim();
+            if (!tail.isEmpty()) {
+                port = String.valueOf(parsePort(tail, defaultPort));
+            }
+        }
+        if (host.isEmpty()) return null;
+        return new String[] { host, port };
+    }
+
+    /** Parse a port, falling back when the text is blank or not a valid 1..65535 value. */
+    public static int parsePort(String text, int fallback) {
+        if (text == null) return fallback;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) return fallback;
+        try {
+            int value = Integer.parseInt(trimmed);
+            if (value < 1 || value > 65535) return fallback;
+            return value;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    // --- Dialog construction (requires a display) ---
+
     private void injectConnectButton() {
         JoinDialog join = Vars.ui.join;
         join.buttons.button("Connect", () -> {
@@ -33,7 +117,11 @@ public final class SharedCampaignUI {
             d.cont.add("Address (IP:Port):").pad(10f).row();
             d.cont.add(addressField).width(300f).pad(10f).row();
             d.cont.button("Connect", () -> {
-                Log.info("SC_CONNECT_PLACEHOLDER addr=" + addressField.getText());
+                if (connectFromUi(addressField.getText())) {
+                    d.hide();
+                } else {
+                    Vars.ui.showErrorMessage("Invalid address. Use host:port.");
+                }
             }).size(120f, 50f);
             d.addCloseButton();
             d.show();
@@ -43,6 +131,7 @@ public final class SharedCampaignUI {
     private void replacePlanetDialog() {
         try {
             CampaignPlanetDialog custom = new CampaignPlanetDialog();
+            custom.setActions(actions);
             java.lang.reflect.Field f = Vars.ui.getClass().getDeclaredField("planet");
             f.setAccessible(true);
             f.set(Vars.ui, custom);
@@ -53,6 +142,24 @@ public final class SharedCampaignUI {
     }
 
     public static class CampaignPlanetDialog extends PlanetDialog {
+
+        private CampaignActions actions = new CampaignActions() {
+            @Override
+            public void hostCampaignAction(int syncPort, int sectorPort) {
+                Log.info("SC_HOST_INIT p1=@ p2=@", syncPort, sectorPort);
+            }
+
+            @Override
+            public void connectAction(String host, int port) {
+            }
+        };
+
+        public void setActions(CampaignActions actions) {
+            if (actions != null) {
+                this.actions = actions;
+            }
+        }
+
         @Override
         public Dialog show() {
             Dialog d = super.show();
@@ -64,15 +171,18 @@ public final class SharedCampaignUI {
             sectorTop.row();
             sectorTop.button("Host Campaign", () -> {
                 BaseDialog d = new BaseDialog("Host Campaign Settings");
-                var port1Field = new arc.scene.ui.TextField("6567");
-                var port2Field = new arc.scene.ui.TextField("6568");
+                var port1Field = new arc.scene.ui.TextField(String.valueOf(DEFAULT_SYNC_PORT));
+                var port2Field = new arc.scene.ui.TextField(String.valueOf(DEFAULT_SECTOR_PORT));
                 d.cont.add("Sync Port:").pad(5f);
                 d.cont.add(port1Field).width(100f).row();
                 d.cont.add("Sector Port:").pad(5f);
                 d.cont.add(port2Field).width(100f).row();
                 d.cont.button("Host", () -> {
                     d.hide();
-                    Log.info("SC_HOST_INIT p1=" + port1Field.getText() + " p2=" + port2Field.getText());
+                    int sync = parsePort(port1Field.getText(), DEFAULT_SYNC_PORT);
+                    int sector = parsePort(port2Field.getText(), DEFAULT_SECTOR_PORT);
+                    actions.hostCampaignAction(sync, sector);
+                    Log.info("SC_HOST_INIT p1=@ p2=@", sync, sector);
                 }).size(100f, 50f);
                 d.addCloseButton();
                 d.show();

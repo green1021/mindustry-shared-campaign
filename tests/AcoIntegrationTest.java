@@ -1,6 +1,7 @@
 package sc.aco;
 
 import arc.util.Log;
+import tests.TestGuard;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -12,6 +13,7 @@ import java.nio.file.*;
 public class AcoIntegrationTest {
 
     public static void main(String[] args) throws Exception {
+        TestGuard.assertEnabled("AcoIntegrationTest");
         System.setProperty("arc.headless", "true");
         
         int passed = 0;

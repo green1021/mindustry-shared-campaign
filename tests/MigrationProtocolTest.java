@@ -1,5 +1,6 @@
 package sc.aco;
 
+import tests.TestGuard;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -10,6 +11,7 @@ import java.nio.file.*;
 public class MigrationProtocolTest {
 
     public static void main(String[] args) throws Exception {
+        TestGuard.assertEnabled("MigrationProtocolTest");
         System.setProperty("arc.headless", "true");
         
         int passed = 0;
