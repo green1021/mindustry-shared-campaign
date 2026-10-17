@@ -17,7 +17,7 @@
   - The desktop client has never run on this headless machine.
 - **Current reality:**
   - Build: PASS (`build/shared-campaign-pc.jar`, sha256 tracked).
-  - Canonical suite: PASS (26/26 with `-ea` enforced and guarded by `tests.TestGuard`).
+  - Canonical suite: PASS (32/32 with `-ea` enforced and guarded by `tests.TestGuard`).
   - Smoke test: PASS (`tests/smoke.py` exits 0 with live server).
   - Negative smoke test: PASS (`tests/negative.py`).
   - ACO mod wiring: DONE (commit `35e0e27`), verified by `tests.AcoWiringTest`.
@@ -33,7 +33,7 @@
 |---|---|---|
 | Production build | **VERIFIED** | `python3 scripts/build.py` produces `build/shared-campaign-pc.jar` cleanly. |
 | ACO Frame codec | **VERIFIED** | Canonical `AcoIntegrationTest` + `MigrationProtocolTest`. |
-| ACO Control Plane (P1/P2/Bank/Registry) | **VERIFIED** | 26/26 canonical assertions pass with `-ea` active. |
+| ACO Control Plane (P1/P2/Bank/Registry) | **VERIFIED** | 32/32 canonical assertions pass with `-ea` active. |
 | Assertion guard | **VERIFIED** | `tests.TestGuard.assertEnabled()` trips on missing `-ea`. |
 | Headless engine smoke | **VERIFIED** | `tests/smoke.py` loads mod into real `server-release.jar`. |
 | Version banner alignment | **VERIFIED** | `SharedCampaignMod` dynamically reports `mod.json` version. |
@@ -79,8 +79,18 @@ Runner: `scripts/run_canonical_tests.py` (enforces `-ea`, 96 MiB heap, resource 
    - `ReleaseFreesSector`
    - `StaleReleaseRejected`
    - `SecondClaimOnHeldSectorRejected`
+7. `tests.AcoBroadcastDesyncTest`: PASS (4/4) — regression for
+   `reports/2026-10-17-broadcast-desync.md`
+   - `RequestAfterBroadcastIsNotDesynced`
+   - `CompletionRequestNeverYieldsStateSync`
+   - `SkippedBroadcastFramesAreCounted`
+   - `RepeatedRequestsStayAligned`
+8. `tests.AcoPersistenceLocationTest`: PASS (2/2) — regression for the persistence
+   split-brain (authority state was serialized into the process CWD)
+   - `CompletionPersistsToConfiguredDir`
+   - `CompletionLeavesCwdClean`
 
-Total: 26/26 passed with `-ea` enforced.
+Total: 32/32 passed with `-ea` enforced.
 
 `AcoVerticalSliceTest` substitutes a stub `sc.aco.SectorRuntime` for the game
 runtime. It proves framing, routing, ownership bookkeeping and endpoint

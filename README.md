@@ -11,12 +11,15 @@ against a live localhost authority. A real P2 sector host and real desktop-clien
 multiplayer are **ENVIRONMENT-BLOCKED** on the current headless build host (no
 display). See `reports/status-report.md` for the honest subsystem matrix.
 
-Verified headless today (26/26 canonical assertions, `-ea` enforced):
+Verified headless today (32/32 canonical assertions, `-ea` enforced):
 
 - ACO frame codec, ownership registry, global bank, transaction manager.
 - ACO wired into mod init and the UI action seam (`tests.AcoWiringTest`).
 - Claim → join → release over real TCP against a live authority
   (`tests.AcoVerticalSliceTest`), with a stubbed game runtime.
+- Response framing under unsolicited broadcasts, and campaign persistence landing
+  in the configured storage directory (`tests.AcoBroadcastDesyncTest`,
+  `tests.AcoPersistenceLocationTest`).
 
 Not verified (never claim otherwise):
 
