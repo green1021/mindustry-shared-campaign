@@ -43,6 +43,15 @@ public final class AcoController implements sc.CampaignActions {
 
     private SectorRuntime runtimeOverride;
 
+    /**
+     * Cap on unsolicited broadcast frames a single round trip will skip before
+     * giving up, so a peer that only ever broadcasts cannot hang the client.
+     */
+    private static final int MAX_SKIPPED_FRAMES = 8;
+
+    /** Diagnostics: total unsolicited broadcast frames skipped across requests. */
+    private long skippedSyncFrames;
+
     public AcoController(String dataDirName) {
         this.storageDir = Paths.get(dataDirName);
     }
@@ -167,22 +176,62 @@ public final class AcoController implements sc.CampaignActions {
      */
     public synchronized String requestClaim(String sectorKey, String sessionId, String deviceId, long revision) {
         String payload = sectorKey + "|" + sessionId + "|" + deviceId + "|" + revision;
-        return roundTrip(AcoMessageType.SECTOR_CLAIM_REQUEST, payload);
+        return roundTrip(AcoMessageType.SECTOR_CLAIM_REQUEST, payload, AcoMessageType.SECTOR_CLAIM_RESULT.id);
     }
 
     /** Join (resolve endpoint of) a sector on the connected authority. */
     public synchronized String requestJoin(String sectorKey) {
-        return roundTrip(AcoMessageType.SECTOR_JOIN_REQUEST, sectorKey);
+        // Success answers with SECTOR_HOST_CHANGED, a refusal with SECTOR_MIGRATION_RESULT.
+        return roundTrip(AcoMessageType.SECTOR_JOIN_REQUEST, sectorKey,
+            AcoMessageType.SECTOR_HOST_CHANGED.id, AcoMessageType.SECTOR_MIGRATION_RESULT.id);
     }
 
     /** Release a held sector on the connected authority. */
     public synchronized String requestRelease(String sectorKey, String sessionId, long ownershipVersion) {
         String payload = sectorKey + "|" + sessionId + "|" + ownershipVersion;
-        return roundTrip(AcoMessageType.SECTOR_RELEASE, payload);
+        return roundTrip(AcoMessageType.SECTOR_RELEASE, payload, AcoMessageType.SECTOR_RELEASE.id);
     }
 
-    /** Send one request frame and read one response frame over the live socket. */
-    private String roundTrip(AcoMessageType requestType, String payload) {
+    /**
+     * Submit a global resource transaction to the connected authority.
+     * Payload order matches {@link GlobalResourceRequest}'s components.
+     */
+    public synchronized String requestResource(String operationId, String sessionId, String sectorId,
+                                               long expectedGlobalRevision, String resourceType, long amount,
+                                               GlobalResourceRequest.OperationType operationType) {
+        String payload = operationId + "|" + sessionId + "|" + sectorId + "|" + expectedGlobalRevision
+            + "|" + resourceType + "|" + amount + "|" + operationType.name();
+        return roundTrip(AcoMessageType.GLOBAL_RESOURCE_REQUEST, payload,
+            AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id);
+    }
+
+    /** Report a sector completion to the connected authority. */
+    public synchronized String requestSectorCompletion(String sectorKey, String operationId) {
+        return roundTrip(AcoMessageType.SECTOR_COMPLETION_EVENT, sectorKey + "|" + operationId,
+            AcoMessageType.SECTOR_COMPLETION_EVENT.id);
+    }
+
+    /**
+     * Send one request frame and read its response over the live socket.
+     *
+     * <p>Several handlers ({@code handleResourceRequest}, {@code handleSectorCompletion})
+     * also push an unsolicited {@code GLOBAL_STATE_SYNC} frame to <em>every</em>
+     * session, including the requester. Reading "the next frame" would therefore
+     * return the queued broadcast instead of the response — see
+     * {@code reports/2026-10-17-broadcast-desync.md}. This method skips known
+     * unsolicited broadcasts (counting them) and keeps reading until it sees one of
+     * the response types it is waiting for, bounded by {@link #MAX_SKIPPED_FRAMES}
+     * so a misbehaving peer cannot hang the client.
+     *
+     * <p>The response id is not always the request id: {@code SECTOR_CLAIM_REQUEST}
+     * is answered with {@code SECTOR_CLAIM_RESULT}, and a join is answered with
+     * either {@code SECTOR_HOST_CHANGED} (success) or
+     * {@code SECTOR_MIGRATION_RESULT} (refusal), so the caller lists the acceptable
+     * responses explicitly.
+     *
+     * @return the response payload, or null when not connected or the exchange failed
+     */
+    private String roundTrip(AcoMessageType requestType, String payload, byte... expectedResponses) {
         if (authoritySocket == null || authoritySocket.isClosed()) {
             Log.warn("ACO_ROUNDTRIP_NOT_CONNECTED type=@", requestType);
             return null;
@@ -196,20 +245,45 @@ public final class AcoController implements sc.CampaignActions {
             out.write(req.encode());
             out.flush();
 
-            byte[] header = new byte[AcoFrame.HEADER_SIZE];
-            if (!readFully(in, header)) return null;
-            ByteBuffer hb = ByteBuffer.wrap(header);
-            int type = hb.get(1);
-            int len = hb.getInt(6);
-            if (len < 0 || len > AcoFrame.MAX_PAYLOAD) return null;
-            byte[] body = new byte[len];
-            if (!readFully(in, body)) return null;
-
-            return new String(body, java.nio.charset.StandardCharsets.UTF_8);
+            for (int skipped = 0; skipped <= MAX_SKIPPED_FRAMES; skipped++) {
+                AcoFrame frame = readFrame(in);
+                if (frame == null) return null;
+                for (byte expected : expectedResponses) {
+                    if (frame.type() == expected) {
+                        return new String(frame.payload(), java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+                if (isUnsolicited(frame.type())) {
+                    skippedSyncFrames++;
+                    Log.debug("ACO_ROUNDTRIP_SKIP_BROADCAST awaiting=@ got=@", requestType, frame.type());
+                    continue;
+                }
+                // An unexpected, non-broadcast frame: do not guess, report failure.
+                Log.warn("ACO_ROUNDTRIP_UNEXPECTED awaiting=@ got=@", requestType, frame.type());
+                return null;
+            }
+            Log.warn("ACO_ROUNDTRIP_TOO_MANY_SKIPS awaiting=@", requestType);
+            return null;
         } catch (IOException e) {
             Log.warn("ACO_ROUNDTRIP_FAILED type=@ reason=@", requestType, e.getMessage());
             return null;
         }
+    }
+
+    /** Frames the authority pushes without a matching request. */
+    private static boolean isUnsolicited(byte type) {
+        return type == AcoMessageType.GLOBAL_STATE_SYNC.id;
+    }
+
+    private static AcoFrame readFrame(InputStream in) throws IOException {
+        byte[] header = new byte[AcoFrame.HEADER_SIZE];
+        if (!readFully(in, header)) return null;
+        ByteBuffer hb = ByteBuffer.wrap(header);
+        int len = hb.getInt(6);
+        if (len < 0 || len > AcoFrame.MAX_PAYLOAD) return null;
+        byte[] body = new byte[len];
+        if (!readFully(in, body)) return null;
+        return new AcoFrame(hb.get(0), hb.get(1), hb.getInt(2), body);
     }
 
     private static boolean readFully(InputStream in, byte[] buf) throws IOException {
@@ -253,6 +327,11 @@ public final class AcoController implements sc.CampaignActions {
 
     public synchronized boolean isConnected() {
         return connected;
+    }
+
+    /** Total unsolicited broadcast frames skipped while awaiting responses. */
+    public synchronized long getSkippedSyncFrames() {
+        return skippedSyncFrames;
     }
 
     public synchronized long getGlobalRevision() {

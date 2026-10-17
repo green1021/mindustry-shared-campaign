@@ -88,6 +88,15 @@ CANONICAL = [
         'expected': 6,
         'requires_assertions': True,
     },
+    {
+        # Regression for the unsolicited GLOBAL_STATE_SYNC broadcast desyncing a
+        # one-frame round trip; see reports/2026-10-17-broadcast-desync.md.
+        'name': 'AcoBroadcastDesyncTest',
+        'main': 'tests.AcoBroadcastDesyncTest',
+        'sources': ['tests/AcoBroadcastDesyncTest.java'],
+        'expected': 4,
+        'requires_assertions': True,
+    },
 ]
 
 
