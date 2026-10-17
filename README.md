@@ -13,7 +13,7 @@ headless; real desktop-client multiplayer alone remains **ENVIRONMENT-BLOCKED** 
 this build host (no display). See `reports/status-report.md` for the honest
 subsystem matrix.
 
-Verified headless today (36/36 canonical assertions, `-ea` enforced):
+Verified headless today (39/39 canonical assertions, `-ea` enforced):
 
 - ACO frame codec, ownership registry, global bank, transaction manager.
 - ACO wired into mod init and the UI action seam (`tests.AcoWiringTest`).
@@ -29,6 +29,9 @@ Verified headless today (36/36 canonical assertions, `-ea` enforced):
 - Response framing under unsolicited broadcasts, and campaign persistence landing
   in the configured storage directory (`tests.AcoBroadcastDesyncTest`,
   `tests.AcoPersistenceLocationTest`).
+- Client-side state sync: a `GLOBAL_STATE_SYNC` broadcast is received over a live
+  socket and folded into a revision-guarded local campaign view that never rolls
+  back on a stale or replayed sync (`tests.AcoClientStateSyncTest`).
 
 Not verified (never claim otherwise):
 

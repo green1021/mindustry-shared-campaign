@@ -36,8 +36,8 @@ but not yet run.
 | H | Gameplay-originated completion event | UNTESTED | encoding verified; not driven from gameplay |
 | I | P1 authoritative progression mutation | **VERIFIED** | `tests.GameplayBoundaryTest` |
 | J | Persistence | **VERIFIED** | `PersistenceRoundTrip` |
-| K | GLOBAL_STATE_SYNC | UNTESTED | broadcast is fire-and-forget in `AcoServer`; no client-side receiver exists |
-| L | LocalGlobalStateView update | NOT IMPLEMENTED | no such class in the tree; a client-side state view still needs building |
+| K | GLOBAL_STATE_SYNC | **VERIFIED** | `tests.AcoClientStateSyncTest.BroadcastAdvancesLocalView`: a real broadcast over a live socket is parsed by `AcoClient.handleGlobalStateSync` and advances the client view to the new revision/balance |
+| L | LocalGlobalStateView update | **VERIFIED** | `tests.AcoClientStateSyncTest`: the revision-guarded client view (`AcoClient.getLocalCache`) applies a newer sync, rejects a stale or equal one (no rollback), and ignores a malformed payload |
 | M | Correct RELEASE | **VERIFIED** | `AcoVerticalSliceTest.ReleaseFreesSector` / `StaleReleaseRejected` |
 | N | P2 shutdown/socket release | **VERIFIED** | authority `dispose()` releases the sync socket; `P2ServerBindTest.StopP2ReleasesListener` proves real P2 stop clears `Vars.net.server()` and frees the port |
 | O | Ownership registry consistency | **VERIFIED** | `AcoVerticalSliceTest` (claim/join/release/second-claim) |
@@ -56,6 +56,12 @@ workspace is a deliberate confinement (marker + campaign id + lease + eligible
 save), and `tests/m4_sector_session.py` stands it up and drives the production
 load/save path headless (row G). Note this path's transport is local stdio at a
 trusted console, not an authenticated remote protocol.
+
+The client half of the state-sync path is now covered too: `AcoClient` receives a
+`GLOBAL_STATE_SYNC` broadcast, decodes it with the same codec the authority
+persists, and folds it into a revision-guarded local view (rows K/L,
+`tests.AcoClientStateSyncTest`). A broadcast is applied only when its revision is
+strictly newer, so a reordered or replayed sync cannot roll a client back.
 
 ## 5. Risks
 - System resource limits during real P2 startup (the runtime tests need a 256 MiB
