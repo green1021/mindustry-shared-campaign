@@ -160,6 +160,20 @@ CANONICAL = [
         'requires_assertions': True,
         'heap': '256m',
     },
+    {
+        'name': 'GlobalBankRegressionTest',
+        'main': 'tests.GlobalBankRegressionTest',
+        'sources': ['tests/GlobalBankRegressionTest.java'],
+        'expected': 5,
+        'requires_assertions': True,
+    },
+    {
+        'name': 'SectorRegistryConcurrencyTest',
+        'main': 'tests.SectorRegistryConcurrencyTest',
+        'sources': ['tests/SectorRegistryConcurrencyTest.java'],
+        'expected': 1,
+        'requires_assertions': True,
+    },
 ]
 
 

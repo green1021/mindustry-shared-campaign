@@ -15,52 +15,58 @@ public class SectorRegistry {
     }
 
     public boolean claimSector(String sectorKey, String sessionId, long expectedRevision) {
-        SectorOwnership existing = registry.get(sectorKey);
-        if (existing == null || existing.ownerSessionId == null) {
-            SectorOwnership newOwnership = new SectorOwnership(sectorKey);
-            newOwnership.ownerSessionId = sessionId;
-            newOwnership.ownershipVersion = 1;
-            newOwnership.revisionVersion = expectedRevision;
-            newOwnership.lastHeartbeat = System.currentTimeMillis();
-            registry.put(sectorKey, newOwnership);
-            return true;
-        }
-        return false;
+        SectorOwnership newOwnership = new SectorOwnership(sectorKey);
+        newOwnership.ownerSessionId = sessionId;
+        newOwnership.ownershipVersion = 1;
+        newOwnership.revisionVersion = expectedRevision;
+        newOwnership.lastHeartbeat = System.currentTimeMillis();
+        
+        return registry.compute(sectorKey, (k, existing) -> {
+            if (existing == null || existing.ownerSessionId == null) {
+                return newOwnership;
+            }
+            return existing;
+        }) == newOwnership;
     }
 
     public boolean transferOwnership(String sectorKey, String fromSession, String toSession, long newRevision) {
-        SectorOwnership own = registry.get(sectorKey);
-        if (own == null || !own.ownerSessionId.equals(fromSession)) return false;
-        
-        own.ownerSessionId = toSession;
-        own.ownershipVersion++;
-        own.revisionVersion = newRevision;
-        own.lastHeartbeat = System.currentTimeMillis();
-        return true;
+        return registry.computeIfPresent(sectorKey, (k, own) -> {
+            if (own.ownerSessionId != null && own.ownerSessionId.equals(fromSession)) {
+                own.ownerSessionId = toSession;
+                own.ownershipVersion++;
+                own.revisionVersion = newRevision;
+                own.lastHeartbeat = System.currentTimeMillis();
+            }
+            return own;
+        }) != null && registry.get(sectorKey).ownerSessionId.equals(toSession);
     }
 
     public void registerHeartbeat(String sectorKey, String sessionId) {
-        SectorOwnership own = registry.get(sectorKey);
-        if (own != null && own.ownerSessionId.equals(sessionId)) {
-            own.lastHeartbeat = System.currentTimeMillis();
-        }
+        registry.computeIfPresent(sectorKey, (k, own) -> {
+            if (own.ownerSessionId != null && own.ownerSessionId.equals(sessionId)) {
+                own.lastHeartbeat = System.currentTimeMillis();
+            }
+            return own;
+        });
     }
 
     public boolean releaseSector(String sectorKey, String sessionId) {
-        SectorOwnership own = registry.get(sectorKey);
-        if (own != null && own.ownerSessionId.equals(sessionId)) {
-            own.ownerSessionId = null;
-            own.endpoint = null;
-            own.ownershipVersion++;
-            return true;
-        }
-        return false;
+        return registry.computeIfPresent(sectorKey, (k, own) -> {
+            if (own.ownerSessionId != null && own.ownerSessionId.equals(sessionId)) {
+                own.ownerSessionId = null;
+                own.endpoint = null;
+                own.ownershipVersion++;
+            }
+            return own;
+        }) != null && registry.get(sectorKey).ownerSessionId == null;
     }
 
     public void updateEndpoint(String sectorKey, String sessionId, String endpoint) {
-        SectorOwnership own = registry.get(sectorKey);
-        if (own != null && own.ownerSessionId.equals(sessionId)) {
-            own.endpoint = endpoint;
-        }
+        registry.computeIfPresent(sectorKey, (k, own) -> {
+            if (own.ownerSessionId != null && own.ownerSessionId.equals(sessionId)) {
+                own.endpoint = endpoint;
+            }
+            return own;
+        });
     }
 }

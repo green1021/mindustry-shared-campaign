@@ -30,8 +30,13 @@ public class GlobalBank {
         Log.info("BANK_REQ: " + req.operationType() + " val: " + req.amount() + " cur: " + getBalance(req.resourceType()));
         // Idempotency check
         if (state.processedOperations.containsKey(req.operationId())) {
-            Log.info("GLOBAL_BANK: Duplicate operation @", req.operationId());
-            return (TransactionResult) state.processedOperations.get(req.operationId());
+            Object op = state.processedOperations.get(req.operationId());
+            if (op instanceof TransactionResult) {
+                Log.info("GLOBAL_BANK: Duplicate operation @", req.operationId());
+                return (TransactionResult) op;
+            }
+            Log.err("GLOBAL_BANK: Incompatible idempotency type for @", req.operationId());
+            return new TransactionResult(req.operationId(), false, "INCOMPATIBLE_IDEMPOTENCY_TYPE", state.globalRevision, getBalance(req.resourceType()));
         }
 
         // Revision validation
@@ -43,6 +48,7 @@ public class GlobalBank {
 
         long current = getBalance(req.resourceType());
         long delta = req.amount();
+        long newBalance = current;
         boolean success = false;
         String error = null;
 
@@ -53,17 +59,17 @@ public class GlobalBank {
                 } else if (current > Long.MAX_VALUE - delta) {
                     error = "OVERFLOW";
                 } else {
-                    state.globalBank.put(req.resourceType(), current + delta);
+                    newBalance = current + delta;
                     success = true;
                 }
                 break;
             case DEBIT:
                 if (delta <= 0) {
                     error = "INVALID_AMOUNT";
-                } else if (current < delta) { // CHECKING UNDERFLOW!
+                } else if (current < delta) {
                     error = "INSUFFICIENT_BALANCE";
                 } else {
-                    state.globalBank.put(req.resourceType(), current - delta);
+                    newBalance = current - delta;
                     success = true;
                 }
                 break;
@@ -71,7 +77,7 @@ public class GlobalBank {
                 if (delta <= 0) {
                     error = "INVALID_AMOUNT";
                 } else if (current >= delta) {
-                    state.globalBank.put(req.resourceType(), current - delta);
+                    newBalance = current - delta;
                     success = true;
                 } else {
                     error = "INSUFFICIENT_BALANCE";
@@ -83,24 +89,27 @@ public class GlobalBank {
                 } else if (current > Long.MAX_VALUE - delta) {
                     error = "OVERFLOW";
                 } else {
-                    state.globalBank.put(req.resourceType(), current + delta);
+                    newBalance = current + delta;
                     success = true;
                 }
                 break;
         }
 
+        TransactionResult result = new TransactionResult(req.operationId(), success, error, success ? state.globalRevision + 1 : state.globalRevision, success ? newBalance : current);
+
         if (success) {
+            try {
+                persistence.appendWAL(new TransactionLogEntry(req, result, System.currentTimeMillis()));
+                persistence.save(state);
+            } catch (IOException e) {
+                Log.err("PERSISTENCE_FAILURE", e);
+                return new TransactionResult(req.operationId(), false, "PERSISTENCE_FAILURE", state.globalRevision, current);
+            }
+            state.globalBank.put(req.resourceType(), newBalance);
             state.globalRevision++;
-        }
-
-        TransactionResult result = new TransactionResult(req.operationId(), success, error, state.globalRevision, getBalance(req.resourceType()));
-        state.processedOperations.put(req.operationId(), result);
-
-        try {
-            persistence.appendWAL(new TransactionLogEntry(req, result, System.currentTimeMillis()));
-            persistence.save(state);
-        } catch (IOException e) {
-            Log.err("PERSISTENCE_FAILURE", e);
+            state.processedOperations.put(req.operationId(), result);
+        } else {
+            state.processedOperations.put(req.operationId(), result);
         }
 
         return result;
