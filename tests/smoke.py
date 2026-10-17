@@ -81,7 +81,12 @@ try:
         assert 'SC_NETWORK_DENIED' in text, 'Network guard missing'
         assert '1 mods loaded.' in text, 'Mod loader evidence missing'
         assert 'SC_PC_INIT_OK engine=160.4' in text, 'Real mod init/version marker missing'
-        assert 'SC_STATUS version=0.0.2 engine=160.4 features=false' in text, 'Server command status missing'
+        # Expected version comes from mod.json, the single source of truth. A
+        # hardcoded literal here previously drifted (asserted 0.0.2 while mod.json
+        # said 0.0.11) and silently broke this harness.
+        declared = json.loads((ROOT / 'mod.json').read_text())['version']
+        expected = f'SC_STATUS version={declared} engine=160.4 features=false'
+        assert expected in text, f'Server command status missing (wanted {expected!r})'
         record['passed'] = True
 except Exception as e:
     record['error'] = str(e)

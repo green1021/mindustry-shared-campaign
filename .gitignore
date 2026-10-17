@@ -8,6 +8,7 @@
 *.pem
 *.log
 *.msav
+*.class
 settings.bin
 settings_backups/
 saves/
@@ -17,3 +18,8 @@ build/
 .gradle/
 *.jar
 __pycache__/
+.claude/
+# ACO campaign persistence state written at runtime.
+campaign.json
+campaign.json.tmp
+transaction_log.jsonl
