@@ -141,17 +141,49 @@ public class AcoServer {
             CampaignPersistence.toJson(globalState).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
     
+    /**
+     * Apply a research report from a sector host to the campaign tech tree.
+     *
+     * <p>Payload is {@code tech|opId}, with {@code opId} optional. Research is
+     * idempotent by tech name: acquiring the same technology twice is the same
+     * operation, so the id defaults to {@code "research:" + tech} when omitted. A
+     * replayed report is acknowledged without advancing the revision.
+     *
+     * <p>This used to answer {@code SUCCESS} while mutating nothing — a success that
+     * made no state change. It now records the unlock in
+     * {@link GlobalCampaignState#techTree}, advances the global revision, persists the
+     * snapshot, and broadcasts it, exactly like a completion.
+     */
     private void handleResearchRequest(AcoFrame f, OutputStream out) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
-        // payload: techName
-        String tech = payload.split("\\|", -1)[0];
-        
-        // Validate and apply research
-        // For now, just acknowledge
-        String response = tech + "|SUCCESS|0|"; // tech|status|revision
-        out.write(new AcoFrame((byte)1, AcoMessageType.RESEARCH_RESPONSE.id, 0, response.getBytes()).encode());
+        String[] parts = payload.split("\\|", -1);
+        String tech = parts[0];
+        String opId = parts.length > 1 && !parts[1].isEmpty() ? parts[1] : "research:" + tech;
 
-        // Broadcast sync if successful
+        if (tech.isEmpty()) {
+            out.write(new AcoFrame((byte)1, AcoMessageType.RESEARCH_RESPONSE.id, 0,
+                "|FAIL|0|".getBytes()).encode());
+            return;
+        }
+
+        if (globalState.processedOperations.containsKey(opId)) {
+            // Already applied: acknowledge with the current revision, change nothing.
+            out.write(new AcoFrame((byte)1, AcoMessageType.RESEARCH_RESPONSE.id, 0,
+                (tech + "|SUCCESS|" + globalState.globalRevision + "|").getBytes()).encode());
+            return;
+        }
+
+        globalState.techTree.put(tech, true);
+        globalState.globalRevision++;
+        globalState.processedOperations.put(opId, true);
+        try {
+            authority.getPersistence().save(globalState);
+        } catch (IOException e) {
+            Log.err("ACO_RESEARCH_PERSIST_FAILED tech=@", tech, e);
+        }
+
+        out.write(new AcoFrame((byte)1, AcoMessageType.RESEARCH_RESPONSE.id, 0,
+            (tech + "|SUCCESS|" + globalState.globalRevision + "|").getBytes()).encode());
         broadcastStateSync();
     }
 

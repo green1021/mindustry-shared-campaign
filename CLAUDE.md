@@ -9,7 +9,8 @@ Distributed co-op campaign mod for **Mindustry v160.4 (PC)**: several players, e
 - Repo culture: evidence-based, brutally honest reports. VERIFIED vs ENVIRONMENT-BLOCKED vs UNTESTED must never be blurred.
 
 ## This machine (VPS)
-- OpenJDK 17.0.20.1 (`javac 17.0.20.1`), Python 3.14. Headless — never attempt to launch the desktop client.
+- OpenJDK 17.0.20.1 (`javac 17.0.20.1`), Python 3.14. Headless VPS by default.
+- **Headless GUI test harness available** at `/root/hermes-workspace/gui-harness/gui.sh` (Xvfb + Mesa llvmpipe OpenGL 4.5 + xdotool + screenshots + strict memory caps). Read `/root/hermes-workspace/gui-harness/README.md` before using. Never launch desktop Mindustry directly; always go through `./gui.sh run` and cleanly `./gui.sh down` after tests.
 - Engines: `/opt/mindustry/server-release.jar` (v160.4, sha256 `0dbd3275402ff6df8367620a47e0b24e4d4547332b99af7c434796520ca484c2`), `/opt/mindustry-desktop/Mindustry.jar` (full desktop jar with vanilla assets).
 - Shared production VPS, ~2 GB RAM total. Follow the repo's resource discipline: `nice -n 10`, `-J-Xmx96m -J-XX:ActiveProcessorCount=1` for javac/jar, one engine JVM at a time, respect `scripts/resources.py` RAM guard (fails under 200 MiB free).
 - Credentials: never read `/root/.hermes`, `/root/.ssh`, `/root/.git-credentials`, `~/.claude`. Never print secrets.
