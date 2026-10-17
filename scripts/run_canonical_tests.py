@@ -34,6 +34,13 @@ JAVAC = ['nice', '-n', '10', 'javac', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1
 # a bogus "all green" result (see reports/2026-10-16-assertion-guard.md).
 JAVA = ['nice', '-n', '10', 'java', '-ea', '-Xmx96m', '-XX:ActiveProcessorCount=1']
 TEST_TIMEOUT = 90
+# Tests that boot a real Mindustry runtime need more than the 96 MiB control-plane
+# heap; they declare a 'heap' key and get their own command.
+DEFAULT_HEAP = '96m'
+
+
+def java_cmd(heap):
+    return ['nice', '-n', '10', 'java', '-ea', f'-Xmx{heap}', '-XX:ActiveProcessorCount=1']
 
 # Canonical suite: 15 assertions across 4 entry points (BASELINE_BUILD_REPORT.md).
 # `expected` is the number of [PASS] lines the entry point must print. `None` means
@@ -80,8 +87,9 @@ CANONICAL = [
     },
     {
         # M2 vertical slice: claim -> join -> release over real TCP with a stub
-        # game runtime. The production runtime (real NetServer bind) stays
-        # ENVIRONMENT-BLOCKED on a headless host; see the test's class comment.
+        # game runtime. The production runtime's two halves are covered separately
+        # by SectorLoadTest (world load) and P2ServerBindTest (real P2 socket);
+        # a real desktop client joining stays ENVIRONMENT-BLOCKED on a headless host.
         'name': 'AcoVerticalSliceTest',
         'main': 'tests.AcoVerticalSliceTest',
         'sources': ['tests/AcoVerticalSliceTest.java'],
@@ -105,6 +113,28 @@ CANONICAL = [
         'sources': ['tests/AcoPersistenceLocationTest.java'],
         'expected': 2,
         'requires_assertions': True,
+    },
+    {
+        # Row C of PHASE9A_PRE_AUDIT: Vars.world.loadSector(preset.sector) builds a
+        # real generated world headless (256x256, every tile floored, campaign state).
+        # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.
+        'name': 'SectorLoadTest',
+        'main': 'tests.SectorLoadTest',
+        'sources': ['tests/SectorLoadTest.java'],
+        'expected': 2,
+        'requires_assertions': True,
+        'heap': '256m',
+    },
+    {
+        # Rows D/E of PHASE9A_PRE_AUDIT: the PRODUCTION SectorRuntimeAdapter binds a
+        # real listening P2 socket in a headless runtime, and stopP2 releases it.
+        # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.
+        'name': 'P2ServerBindTest',
+        'main': 'tests.P2ServerBindTest',
+        'sources': ['tests/P2ServerBindTest.java'],
+        'expected': 2,
+        'requires_assertions': True,
+        'heap': '256m',
     },
 ]
 
@@ -145,8 +175,9 @@ def compile_tests():
 
 
 def run_test(test):
-    rc, out = run_capture(
-        JAVA + ['-cp', f'{TEST_CLASSES}:{CLASSES}:{ENGINE}', test['main']], timeout=TEST_TIMEOUT)
+    cmd = java_cmd(test.get('heap', DEFAULT_HEAP)) + [
+        '-cp', f'{TEST_CLASSES}:{CLASSES}:{ENGINE}', test['main']]
+    rc, out = run_capture(cmd, timeout=TEST_TIMEOUT)
     print(out, end='' if out.endswith('\n') else '\n', flush=True)
     passes = len(re.findall(r'^\[PASS\] ', out, re.M))
     failures = re.findall(r'^\[(?:FAIL|ERROR)\] (.+)$', out, re.M)
