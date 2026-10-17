@@ -16,6 +16,7 @@ public class GlobalBank {
         if (req == null) {
             return new TransactionResult("null", false, "INVALID_REQUEST", 0, 0);
         }
+        
         if (req.operationId() == null || req.operationId().isBlank() ||
             req.sessionId() == null || req.sessionId().isBlank() ||
             req.sectorId() == null || req.sectorId().isBlank() ||
@@ -29,19 +30,22 @@ public class GlobalBank {
             return new TransactionResult(req.operationId(), false, "INVALID_AMOUNT", state.globalRevision, getBalance(req.resourceType()));
         }
 
-        // Idempotency check with full payload validation
+        RequestFingerprint incoming = new RequestFingerprint(req.operationId(), req.sectorId(), req.resourceType(), req.amount(), req.operationType().name());
+        
         if (state.processedOperations.containsKey(req.operationId())) {
             Object stored = state.processedOperations.get(req.operationId());
-            if (!(stored instanceof TransactionResult)) {
-                return new TransactionResult(req.operationId(), false, "INCOMPATIBLE_IDEMPOTENCY_TYPE", state.globalRevision, getBalance(req.resourceType()));
+            if (stored instanceof IdempotentEntry entry) {
+                if (!entry.fingerprint().equals(incoming)) {
+                    return new TransactionResult(req.operationId(), false, "IDEMPOTENCY_PAYLOAD_MISMATCH", state.globalRevision, getBalance(req.resourceType()));
+                }
+                return entry.result();
             }
-            return (TransactionResult) stored;
+            return new TransactionResult(req.operationId(), false, "INCOMPATIBLE_IDEMPOTENCY_TYPE", state.globalRevision, getBalance(req.resourceType()));
         }
 
-        // Revision validation
         if (req.expectedGlobalRevision() != state.globalRevision) {
             TransactionResult rej = new TransactionResult(req.operationId(), false, "STALE_REVISION", state.globalRevision, getBalance(req.resourceType()));
-            state.processedOperations.put(req.operationId(), rej);
+            state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, rej));
             return rej;
         }
 
@@ -73,19 +77,16 @@ public class GlobalBank {
 
         if (success) {
             try {
-                // WAL append first
                 persistence.appendWAL(new TransactionLogEntry(req, result, System.currentTimeMillis()));
-                // Save state ONLY after WAL is successfully written
                 persistence.save(state);
             } catch (IOException e) {
-                Log.err("PERSISTENCE_FAILURE", e);
-                return new TransactionResult(req.operationId(), false, "PERSISTENCE_FAILURE", state.globalRevision, current);
+                throw new RuntimeException("CRITICAL: Persistence failure after successful WAL append", e);
             }
             state.globalBank.put(req.resourceType(), newBalance);
             state.globalRevision++;
-            state.processedOperations.put(req.operationId(), result);
+            state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, result));
         } else {
-            state.processedOperations.put(req.operationId(), result);
+            state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, result));
         }
 
         return result;
@@ -95,4 +96,6 @@ public class GlobalBank {
         if (resourceType == null) return 0L;
         return state.globalBank.getOrDefault(resourceType, 0L);
     }
+    
+    public record IdempotentEntry(RequestFingerprint fingerprint, TransactionResult result) {}
 }
