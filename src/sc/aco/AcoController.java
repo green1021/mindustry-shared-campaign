@@ -85,6 +85,14 @@ public final class AcoController implements sc.CampaignActions {
             Log.err("ACO_STATE_RECOVERY_FAILED", e);
         }
 
+        // A campaign with no progression yet must still offer its starting sector,
+        // or the authority would reject the very first completion as LOCKED. Only a
+        // campaign that has never recorded anything gets the seed, so this can never
+        // re-grant progression after recovery.
+        if (globalState.unlockedSectors.isEmpty() && globalState.completedSectors.isEmpty()) {
+            globalState.unlockStartingSectors();
+        }
+
         this.txManager = new GlobalTransactionManager(globalState, new GlobalBank(globalState, persistence));
         this.authority = new CampaignAuthority(registry, persistence);
         if (runtimeOverride != null) {

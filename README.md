@@ -13,7 +13,7 @@ headless; real desktop-client multiplayer alone remains **ENVIRONMENT-BLOCKED** 
 this build host (no display). See `reports/status-report.md` for the honest
 subsystem matrix.
 
-Verified headless today (39/39 canonical assertions, `-ea` enforced):
+Verified headless today (41/41 canonical assertions, `-ea` enforced):
 
 - ACO frame codec, ownership registry, global bank, transaction manager.
 - ACO wired into mod init and the UI action seam (`tests.AcoWiringTest`).
@@ -32,6 +32,10 @@ Verified headless today (39/39 canonical assertions, `-ea` enforced):
 - Client-side state sync: a `GLOBAL_STATE_SYNC` broadcast is received over a live
   socket and folded into a revision-guarded local campaign view that never rolls
   back on a stale or replayed sync (`tests.AcoClientStateSyncTest`).
+- Gameplay-originated completion: a real `SectorCaptureEvent` is translated by the
+  production `GameplayAdapter`, sent over a live `AcoSocketClient` to a live
+  authority, accepted, and its broadcast folds back into the client view
+  (`tests.GameplayCompletionTest`). The adapter is constructed by the mod entry point.
 
 Not verified (never claim otherwise):
 

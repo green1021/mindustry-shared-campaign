@@ -33,7 +33,7 @@ but not yet run.
 | E | Real P2 listening endpoint | **VERIFIED** | same test, a TCP client reaches `127.0.0.1:port` |
 | F | Real client connection | UNTESTED (control plane VERIFIED) | TCP handshake verified; game-client join not |
 | G | Actual Sector entry | **VERIFIED** | `tests/m4_sector_session.py --stage f2`: production `SectorStore.open` loads a real `.msav` into a live world via `SaveIO.load` (guest sector 64, copper 53, independent of host 170) |
-| H | Gameplay-originated completion event | UNTESTED | encoding verified; not driven from gameplay |
+| H | Gameplay-originated completion event | **VERIFIED** | `tests.GameplayCompletionTest`: a real `EventType.SectorCaptureEvent` fired in a headless runtime is translated by the production `GameplayAdapter`, written over a live `AcoSocketClient` to a live authority, accepted (`revision=1`, `completed=[groundZero]`) and the broadcast folds back into the client view; a second distinct capture reaches `revision=3`, proving per-attempt operation ids |
 | I | P1 authoritative progression mutation | **VERIFIED** | `tests.GameplayBoundaryTest` |
 | J | Persistence | **VERIFIED** | `PersistenceRoundTrip` |
 | K | GLOBAL_STATE_SYNC | **VERIFIED** | `tests.AcoClientStateSyncTest.BroadcastAdvancesLocalView`: a real broadcast over a live socket is parsed by `AcoClient.handleGlobalStateSync` and advances the client view to the new revision/balance |

@@ -137,6 +137,19 @@ CANONICAL = [
         'requires_assertions': True,
     },
     {
+        # Row H of PHASE9A_PRE_AUDIT: a gameplay-originated completion. A real
+        # SectorCaptureEvent is fired in a headless runtime, translated by the
+        # production GameplayAdapter over a real AcoSocketClient to a live
+        # authority, and the broadcast folds back into the client's local view.
+        # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.
+        'name': 'GameplayCompletionTest',
+        'main': 'tests.GameplayCompletionTest',
+        'sources': ['tests/GameplayCompletionTest.java'],
+        'expected': 2,
+        'requires_assertions': True,
+        'heap': '256m',
+    },
+    {
         # Rows D/E of PHASE9A_PRE_AUDIT: the PRODUCTION SectorRuntimeAdapter binds a
         # real listening P2 socket in a headless runtime, and stopP2 releases it.
         # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.

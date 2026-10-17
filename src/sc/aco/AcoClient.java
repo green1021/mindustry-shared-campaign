@@ -89,4 +89,25 @@ public class AcoClient {
             Log.err(e);
         }
     }
+
+    /**
+     * Report a completion carrying an explicit operation id.
+     *
+     * <p>The authority dedupes completions by {@code operationId}, treating a repeat
+     * as the same completion. The bare {@link #sendSectorCompletion(String)} sends no
+     * id, so the authority falls back to a single shared {@code "default-op"} — with
+     * that, the <em>second</em> distinct sector completion would be swallowed as a
+     * duplicate of the first. Gameplay-originated completions therefore use this
+     * overload and pass an id unique per (sector, attempt).
+     */
+    public void sendSectorCompletion(String sector, String opId) {
+        try {
+            String payload = sector + "|" + opId;
+            AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.SECTOR_COMPLETION_EVENT.id, 0,
+                payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            sendFrame(frame);
+        } catch (Exception e) {
+            Log.err(e);
+        }
+    }
 }

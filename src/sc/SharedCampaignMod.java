@@ -17,6 +17,11 @@ public final class SharedCampaignMod extends Mod {
     private final SectorSessions sessions = new SectorSessions();
     private final SharedCampaignUI ui = new SharedCampaignUI();
     private final sc.aco.AcoController aco = new sc.aco.AcoController("shared-campaign-data");
+    // The gameplay boundary (DESIGN_PHASE8A): local Mindustry events become ACO
+    // requests over a real socket. Kept separate from aco's own round-trip socket
+    // because this one is emit-and-forget and receives unsolicited broadcasts.
+    private final sc.aco.AcoSocketClient gameplayClient = new sc.aco.AcoSocketClient();
+    private final sc.aco.GameplayAdapter gameplay = new sc.aco.GameplayAdapter(gameplayClient);
 
     /**
      * Version as declared in mod.json, read from the live mod registry so the
@@ -48,7 +53,10 @@ public final class SharedCampaignMod extends Mod {
         ui.init();
         // mindustry.mod.Mod exposes no dispose() hook; the engine signals teardown
         // through the global DisposeEvent, so bind ACO shutdown there.
-        Events.on(EventType.DisposeEvent.class, e -> aco.dispose());
+        Events.on(EventType.DisposeEvent.class, e -> {
+            gameplayClient.disconnect();
+            aco.dispose();
+        });
         if (Version.build == 160 && Version.revision == 4) {
             Log.info("SC_PC_INIT_OK engine=160.4");
         } else {
@@ -89,7 +97,25 @@ public final class SharedCampaignMod extends Mod {
             int port = args.length > 1 ? SharedCampaignUI.parsePort(args[1], SharedCampaignUI.DEFAULT_SYNC_PORT)
                 : SharedCampaignUI.DEFAULT_SYNC_PORT;
             boolean ok = aco.connectToAuthority(args[0], port);
+            if (ok) connectGameplay(args[0], port);
             Log.info("SC_ACO_CONNECT result=@ @", ok ? "OK" : "FAIL", aco.getStatus());
         });
+    }
+
+    /**
+     * Open the gameplay-boundary socket and start translating local events.
+     *
+     * <p>A sector host reports captures and research through this path. Failure is
+     * non-fatal: the control plane is still usable without it, so a host that cannot
+     * open the second socket logs and continues rather than aborting.
+     */
+    private void connectGameplay(String host, int port) {
+        try {
+            gameplayClient.connect(host, port);
+            gameplay.init();
+            Log.info("SC_ACO_GAMEPLAY_CONNECTED host=@ port=@", host, port);
+        } catch (Exception e) {
+            Log.warn("SC_ACO_GAMEPLAY_CONNECT_FAILED host=@ port=@ reason=@", host, port, e.getMessage());
+        }
     }
 }

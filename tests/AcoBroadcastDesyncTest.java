@@ -26,6 +26,16 @@ import java.util.List;
  */
 public class AcoBroadcastDesyncTest {
 
+    /**
+     * A sector a fresh campaign deterministically refuses. Only the starting
+     * sector is granted on a new campaign (see
+     * {@code GlobalCampaignState.unlockStartingSectors()}), so completing this one
+     * always answers {@code LOCKED|FAIL|0|} regardless of progression. Pinning the
+     * locked assertions here keeps this regression purely about frame alignment,
+     * independent of the unlock seed.
+     */
+    private static final String LOCKED_SECTOR = "craters";
+
     private static int passed = 0;
     private static int failed = 0;
 
@@ -132,7 +142,7 @@ public class AcoBroadcastDesyncTest {
 
             // The handler above broadcast GLOBAL_STATE_SYNC. The next request must
             // still receive its own response, not the queued broadcast.
-            String r2 = p.client.requestSectorCompletion("groundZero", "op-2");
+            String r2 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-2");
             assert r2 != null : "completion request must get a response";
             assert !r2.startsWith("{") : "completion response was the state-sync JSON: " + r2;
             assert r2.equals("LOCKED|FAIL|0|") : "locked sector must refuse completion, got " + r2;
@@ -144,7 +154,7 @@ public class AcoBroadcastDesyncTest {
         try (Pair p = new Pair()) {
             credit(p, "op-1", 50);
             credit(p, "op-2", 25);
-            String r3 = p.client.requestSectorCompletion("groundZero", "op-3");
+            String r3 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-3");
             assert r3 != null && !r3.contains("\"campaignId\"")
                 : "state-sync JSON leaked into a response slot: " + r3;
         }
@@ -155,7 +165,7 @@ public class AcoBroadcastDesyncTest {
             assert p.client.getSkippedSyncFrames() == 0 : "no broadcasts should be skipped before any request";
 
             credit(p, "op-1", 100);
-            String r2 = p.client.requestSectorCompletion("groundZero", "op-2");
+            String r2 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-2");
             assert r2 != null : "second request must get a response";
             assert p.client.getSkippedSyncFrames() >= 1
                 : "a queued broadcast must have been skipped, got " + p.client.getSkippedSyncFrames();
@@ -179,7 +189,7 @@ public class AcoBroadcastDesyncTest {
                 // Distinct id: AcoServer dedupes completions by operation id, and a
                 // reused id would be answered from the seen-set rather than by
                 // evaluating the request.
-                String done = p.client.requestSectorCompletion("groundZero", "done-" + i);
+                String done = p.client.requestSectorCompletion(LOCKED_SECTOR, "done-" + i);
                 assert done != null : "round " + i + " completion response was null";
                 assert done.equals("LOCKED|FAIL|0|") : "round " + i + " completion response: " + done;
             }
