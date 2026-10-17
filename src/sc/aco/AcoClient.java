@@ -58,16 +58,21 @@ public class AcoClient {
         // Implementation by integration wrapper
     }
 
-    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType) {
+    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType, long expectedRevision, String sessionId, String sectorId) {
         try {
-            // protocol: item|amount|opId|opType
-            String payload = item + "|" + amount + "|" + opId + "|" + opType;
+            // protocol: operationId|sessionId|sectorId|expectedRevision|resourceType|amount|operationType
+            String payload = opId + "|" + sessionId + "|" + sectorId + "|" + expectedRevision + "|" + item + "|" + amount + "|" + opType;
             AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_REQUEST.id, 0,
                 payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);
         }
+    }
+
+    /** Legacy 4-field request kept for basic GameplayAdapter compatibility until full migration. */
+    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType) {
+        sendGlobalResourceRequest(item, amount, opId, opType, 0, "unknown", "unknown");
     }
 
     public void sendResearchRequest(String tech) {

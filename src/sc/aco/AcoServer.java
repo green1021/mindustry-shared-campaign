@@ -101,7 +101,7 @@ public class AcoServer {
             handleSectorCompletion(f, out);
         }
     }
-    
+
     private void broadcast(AcoMessageType type, byte[] payload) {
         for (AcoSession sess : sessions.values()) {
             try {
@@ -113,12 +113,26 @@ public class AcoServer {
     private void handleResourceRequest(AcoFrame f, OutputStream out) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
         String[] parts = payload.split("\\|", -1);
-        if (parts.length < 7) return;
 
-        GlobalResourceRequest req = new GlobalResourceRequest(
-            parts[0], parts[1], parts[2], Long.parseLong(parts[3]), parts[4], Long.parseLong(parts[5]),
-            GlobalResourceRequest.OperationType.valueOf(parts[6])
-        );
+        GlobalResourceRequest req;
+        if (parts.length == 7) {
+            req = new GlobalResourceRequest(
+                parts[0], parts[1], parts[2], Long.parseLong(parts[3]), parts[4], Long.parseLong(parts[5]),
+                GlobalResourceRequest.OperationType.valueOf(parts[6])
+            );
+        } else if (parts.length == 4) {
+            // Legacy/Client format: item|amount|opId|opType
+            // mapped to: opId, "unknown", "unknown", 0, item, amount, opType
+            req = new GlobalResourceRequest(
+                parts[2], "unknown", "unknown", 0, parts[0], Long.parseLong(parts[1]),
+                GlobalResourceRequest.OperationType.valueOf(parts[3])
+            );
+        } else {
+            // Malformed
+            out.write(new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id, 0,
+                "|false|MALFORMED_FIELD_COUNT|0|0".getBytes()).encode());
+            return;
+        }
 
         TransactionResult res = txManager.execute(req);
         String responsePayload = res.operationId() + "|" + res.success() + "|" + res.error() + "|" + res.newRevision() + "|" + res.newBalance();
@@ -140,7 +154,7 @@ public class AcoServer {
         broadcast(AcoMessageType.GLOBAL_STATE_SYNC,
             CampaignPersistence.toJson(globalState).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
-    
+
     /**
      * Apply a research report from a sector host to the campaign tech tree.
      *
@@ -210,7 +224,7 @@ public class AcoServer {
         globalState.markSectorCompleted(sectorId);
         globalState.globalRevision++;
         globalState.processedOperations.put(opId, true);
-        
+
         // Persist to the campaign's configured storage directory (not the process CWD).
         try {
             authority.getPersistence().save(globalState);
@@ -223,7 +237,7 @@ public class AcoServer {
 
         broadcastStateSync();
     }
-    
+
     private void handleJoinRequest(AcoFrame f, OutputStream out) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
         authority.handleJoinRequest(payload, "session-id", out); // Simplified

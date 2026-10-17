@@ -96,11 +96,11 @@ public class GameplayBoundaryTest {
 
         String payload = new String(client.lastFrame.payload());
         String[] parts = payload.split("\\|");
-        assert parts.length == 4 : "Payload format item|amount|opId|opType";
-        assert parts[0].equals("copper") : "Item name should be 'copper'";
-        assert parts[1].equals("100") : "Amount";
-        assert parts[2].equals("op-001") : "Operation ID";
-        assert parts[3].equals("WITHDRAW") : "Operation type";
+        assert parts.length == 7 : "Payload format should now be 7 fields";
+        assert parts[0].equals("op-001") : "OpId should be index 0";
+        assert parts[4].equals("copper") : "Item name should be index 4";
+        assert parts[5].equals("100") : "Amount should be index 5";
+        assert parts[6].equals("WITHDRAW") : "OpType should be index 6";
     }
 
     // 2. Research request encoding

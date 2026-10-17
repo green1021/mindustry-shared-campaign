@@ -15,6 +15,19 @@ public class GlobalBank {
     }
 
     public synchronized TransactionResult process(GlobalResourceRequest req) {
+        if (req == null) {
+            return new TransactionResult("null", false, "INVALID_REQUEST", 0, 0);
+        }
+        if (req.operationId() == null || req.operationId().isEmpty() ||
+            req.sessionId() == null || req.sessionId().isEmpty() ||
+            req.sectorId() == null || req.sectorId().isEmpty() ||
+            req.resourceType() == null || req.resourceType().isEmpty() ||
+            req.operationType() == null) {
+            String opId = req.operationId() != null ? req.operationId() : "unknown";
+            return new TransactionResult(opId, false, "MISSING_REQUIRED_FIELDS", state.globalRevision, 0);
+        }
+
+        Log.info("BANK_REQ: " + req.operationType() + " val: " + req.amount() + " cur: " + getBalance(req.resourceType()));
         // Idempotency check
         if (state.processedOperations.containsKey(req.operationId())) {
             Log.info("GLOBAL_BANK: Duplicate operation @", req.operationId());
@@ -35,19 +48,29 @@ public class GlobalBank {
 
         switch (req.operationType()) {
             case CREDIT:
-                state.globalBank.put(req.resourceType(), current + delta);
-                success = true;
+                if (delta <= 0) {
+                    error = "INVALID_AMOUNT";
+                } else if (current > Long.MAX_VALUE - delta) {
+                    error = "OVERFLOW";
+                } else {
+                    state.globalBank.put(req.resourceType(), current + delta);
+                    success = true;
+                }
                 break;
             case DEBIT:
-                if (current >= delta) {
+                if (delta <= 0) {
+                    error = "INVALID_AMOUNT";
+                } else if (current < delta) { // CHECKING UNDERFLOW!
+                    error = "INSUFFICIENT_BALANCE";
+                } else {
                     state.globalBank.put(req.resourceType(), current - delta);
                     success = true;
-                } else {
-                    error = "INSUFFICIENT_BALANCE";
                 }
                 break;
             case WITHDRAW:
-                if (current >= delta) {
+                if (delta <= 0) {
+                    error = "INVALID_AMOUNT";
+                } else if (current >= delta) {
                     state.globalBank.put(req.resourceType(), current - delta);
                     success = true;
                 } else {
@@ -55,8 +78,14 @@ public class GlobalBank {
                 }
                 break;
             case DEPOSIT:
-                state.globalBank.put(req.resourceType(), current + delta);
-                success = true;
+                if (delta <= 0) {
+                    error = "INVALID_AMOUNT";
+                } else if (current > Long.MAX_VALUE - delta) {
+                    error = "OVERFLOW";
+                } else {
+                    state.globalBank.put(req.resourceType(), current + delta);
+                    success = true;
+                }
                 break;
         }
 
@@ -78,6 +107,7 @@ public class GlobalBank {
     }
 
     public long getBalance(String resourceType) {
+        if (resourceType == null) return 0L;
         return state.globalBank.getOrDefault(resourceType, 0L);
     }
 }
