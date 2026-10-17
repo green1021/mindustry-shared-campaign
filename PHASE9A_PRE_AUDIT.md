@@ -28,29 +28,40 @@ but not yet run.
 |---|---|---|---|
 | A | groundZero vanilla Sector resolution | **VERIFIED** | `tests.Phase9ARuntimeStageProbe` (95 sectors, groundZero id 15) |
 | B | Real World initialization | **VERIFIED** | same probe (base content + `World`) |
-| C | Real Sector loading | ENVIRONMENT-BLOCKED | needs `Vars.world.loadSector` inside a live game loop |
-| D | Real P2 startup | ENVIRONMENT-BLOCKED | needs `Vars.net.host` in a live runtime |
-| E | Real P2 listening endpoint | ENVIRONMENT-BLOCKED | depends on D |
+| C | Real Sector loading | **VERIFIED** | `tests.SectorLoadTest` (headless `loadSector` → 256×256, 65536/65536 tiles floored, campaign state) |
+| D | Real P2 startup | **VERIFIED** | `tests.P2ServerBindTest.StartP2BindsRealListener` (production `SectorRuntimeAdapter.startP2` binds a listener) |
+| E | Real P2 listening endpoint | **VERIFIED** | same test, a TCP client reaches `127.0.0.1:port` |
 | F | Real client connection | UNTESTED (control plane VERIFIED) | TCP handshake verified; game-client join not |
-| G | Actual Sector entry | ENVIRONMENT-BLOCKED | needs a full game + display |
+| G | Actual Sector entry | **VERIFIED** | `tests/m4_sector_session.py --stage f2`: production `SectorStore.open` loads a real `.msav` into a live world via `SaveIO.load` (guest sector 64, copper 53, independent of host 170) |
 | H | Gameplay-originated completion event | UNTESTED | encoding verified; not driven from gameplay |
 | I | P1 authoritative progression mutation | **VERIFIED** | `tests.GameplayBoundaryTest` |
 | J | Persistence | **VERIFIED** | `PersistenceRoundTrip` |
 | K | GLOBAL_STATE_SYNC | UNTESTED | broadcast is fire-and-forget in `AcoServer`; no client-side receiver exists |
 | L | LocalGlobalStateView update | NOT IMPLEMENTED | no such class in the tree; a client-side state view still needs building |
 | M | Correct RELEASE | **VERIFIED** | `AcoVerticalSliceTest.ReleaseFreesSector` / `StaleReleaseRejected` |
-| N | P2 shutdown/socket release | **VERIFIED** (authority) / ENVIRONMENT-BLOCKED (real P2) | authority `dispose()` releases the sync socket; real P2 stop not run |
+| N | P2 shutdown/socket release | **VERIFIED** | authority `dispose()` releases the sync socket; `P2ServerBindTest.StopP2ReleasesListener` proves real P2 stop clears `Vars.net.server()` and frees the port |
 | O | Ownership registry consistency | **VERIFIED** | `AcoVerticalSliceTest` (claim/join/release/second-claim) |
 
 Claim/join/release routing, ownership versions and endpoint advertisement were
 verified over real TCP in `tests.AcoVerticalSliceTest` using a stub
-`sc.aco.SectorRuntime`. The rows that stay ENVIRONMENT-BLOCKED are exactly the ones
-where that stub is replaced by the game runtime. A stub passing is not evidence
-about the real runtime.
+`sc.aco.SectorRuntime`. That test still uses a stub; the production runtime's two
+halves are now covered directly instead — `tests.SectorLoadTest` (real
+`Vars.world.loadSector` headless) and `tests.P2ServerBindTest` (real
+`Vars.net.host` bind and release). Those are the rows C/D/E/N evidence.
+
+What remains out of reach on this headless VPS is narrower than first assumed:
+a real desktop client joining a live P2 server (row F). Authoritative sector
+entry through `SectorStore.open` is **not** blocked — the opt-in disposable M4
+workspace is a deliberate confinement (marker + campaign id + lease + eligible
+save), and `tests/m4_sector_session.py` stands it up and drives the production
+load/save path headless (row G). Note this path's transport is local stdio at a
+trusted console, not an authenticated remote protocol.
 
 ## 5. Risks
-- System resource limits during real P2 startup.
-- Mindustry runtime initialization requires full `ApplicationListener` lifecycle.
-- Rows C/D/E/G cannot be closed on this headless VPS at all; they need a
-  display-capable machine.
+- System resource limits during real P2 startup (the runtime tests need a 256 MiB
+  heap, above the 96 MiB control-plane default).
+- Mindustry runtime initialization requires full `ApplicationListener` lifecycle;
+  a bare `Vars.init()` without `HeadlessApplication` throws on `Vars.net.host`.
+- Row F (real game-client join) cannot be closed on this headless VPS at all; it
+  needs a display-capable machine.
 
