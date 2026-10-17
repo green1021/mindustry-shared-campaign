@@ -136,7 +136,12 @@ public class CampaignPersistence {
         }
     }
 
-    public String toJson(GlobalCampaignState state) {
+    /**
+     * Serialize a campaign state. Static and instance-free so the same codec is
+     * used for the on-disk snapshot and for the {@code GLOBAL_STATE_SYNC}
+     * wire payload a client parses (see {@link AcoClient#handleGlobalStateSync}).
+     */
+    public static String toJson(GlobalCampaignState state) {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         sb.append("\"campaignId\":\"").append(escape(state.campaignId)).append("\",");
@@ -195,7 +200,8 @@ public class CampaignPersistence {
         return sb.toString();
     }
 
-    public GlobalCampaignState fromJson(String json) {
+    /** Parse a campaign state produced by {@link #toJson}. Static, see above. */
+    public static GlobalCampaignState fromJson(String json) {
         GlobalCampaignState state = new GlobalCampaignState();
         if (json == null || json.trim().isEmpty()) return state;
 

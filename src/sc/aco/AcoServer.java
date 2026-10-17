@@ -137,7 +137,8 @@ public class AcoServer {
      * {@code CampaignPersistence(Paths.get("."))} per broadcast.
      */
     private void broadcastStateSync() {
-        broadcast(AcoMessageType.GLOBAL_STATE_SYNC, authority.getPersistence().toJson(globalState).getBytes());
+        broadcast(AcoMessageType.GLOBAL_STATE_SYNC,
+            CampaignPersistence.toJson(globalState).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
     
     private void handleResearchRequest(AcoFrame f, OutputStream out) throws IOException {

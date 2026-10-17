@@ -126,6 +126,17 @@ CANONICAL = [
         'heap': '256m',
     },
     {
+        # Rows K/L of PHASE9A_PRE_AUDIT: a GLOBAL_STATE_SYNC broadcast is received
+        # and folded into the client's local campaign view. Drives a real broadcast
+        # over a live socket into AcoClient.handleGlobalStateSync and asserts the
+        # revision-guarded view advances (K) and never rolls back (L).
+        'name': 'AcoClientStateSyncTest',
+        'main': 'tests.AcoClientStateSyncTest',
+        'sources': ['tests/AcoClientStateSyncTest.java'],
+        'expected': 3,
+        'requires_assertions': True,
+    },
+    {
         # Rows D/E of PHASE9A_PRE_AUDIT: the PRODUCTION SectorRuntimeAdapter binds a
         # real listening P2 socket in a headless runtime, and stopP2 releases it.
         # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.

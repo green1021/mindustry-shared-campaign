@@ -6,15 +6,52 @@ import java.io.IOException;
 public class AcoClient {
     private GlobalCampaignState localCache = new GlobalCampaignState();
 
+    /**
+     * Apply an unsolicited {@code GLOBAL_STATE_SYNC} broadcast to the local view.
+     *
+     * <p>The payload is the campaign snapshot serialized by
+     * {@link CampaignPersistence#toJson}, the same codec the authority persists
+     * to disk. This method is the client half of that contract: it parses the
+     * payload and folds it into the cache via
+     * {@link #updateLocalCache(GlobalCampaignState)}. Previously it logged the
+     * frame and dropped the payload, so the local view (and therefore any
+     * sector host reading global state) never advanced on a broadcast.
+     *
+     * <p>A malformed payload is logged and ignored rather than thrown: a bad
+     * broadcast must not tear down the connection.
+     */
     public void handleGlobalStateSync(AcoFrame f) {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
-        Log.info("CLIENT: Received sync");
+        GlobalCampaignState incoming;
+        try {
+            incoming = CampaignPersistence.fromJson(payload);
+        } catch (RuntimeException e) {
+            Log.err("ACO_CLIENT_SYNC_PARSE_FAILED", e);
+            return;
+        }
+        boolean applied = updateLocalCache(incoming);
+        Log.debug("CLIENT: sync applied=@ revision=@", applied, incoming.globalRevision);
     }
 
-    public synchronized void updateLocalCache(GlobalCampaignState newState) {
-        if (newState.globalRevision > localCache.globalRevision) {
+    /**
+     * Fold a received state into the local cache.
+     *
+     * <p>Guarded by revision: a broadcast older than or equal to what we already
+     * hold is ignored, so a reordered or replayed sync cannot roll the view back.
+     *
+     * @return true when the cache advanced, false when the state was stale
+     */
+    public synchronized boolean updateLocalCache(GlobalCampaignState newState) {
+        if (newState != null && newState.globalRevision > localCache.globalRevision) {
             this.localCache = newState;
+            return true;
         }
+        return false;
+    }
+
+    /** The most recent campaign state folded in from a sync broadcast. */
+    public synchronized GlobalCampaignState getLocalCache() {
+        return localCache;
     }
 
     protected void sendFrame(AcoFrame f) throws IOException {
