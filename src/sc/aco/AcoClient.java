@@ -25,7 +25,8 @@ public class AcoClient {
         try {
             // protocol: item|amount|opId|opType
             String payload = item + "|" + amount + "|" + opId + "|" + opType;
-            AcoFrame frame = new AcoFrame((byte)1, (byte)15, 0, payload.getBytes());
+            AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_REQUEST.id, 0,
+                payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);
@@ -34,7 +35,8 @@ public class AcoClient {
 
     public void sendResearchRequest(String tech) {
         try {
-            AcoFrame frame = new AcoFrame((byte)1, (byte)17, 0, (tech + "|").getBytes());
+            AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.RESEARCH_REQUEST.id, 0,
+                (tech + "|").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);
@@ -43,7 +45,8 @@ public class AcoClient {
 
     public void sendSectorCompletion(String sector) {
         try {
-            AcoFrame frame = new AcoFrame((byte)1, (byte)26, 0, sector.getBytes());
+            AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.SECTOR_COMPLETION_EVENT.id, 0,
+                sector.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);

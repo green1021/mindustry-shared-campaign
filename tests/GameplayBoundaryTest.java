@@ -24,6 +24,7 @@ public class GameplayBoundaryTest {
     private static mindustry.type.Item copperItem;
 
     public static void main(String[] args) {
+        TestGuard.assertEnabled("GameplayBoundaryTest");
         System.setProperty("arc.headless", "true");
         if (Vars.content == null) {
             Vars.content = new mindustry.core.ContentLoader();
@@ -245,7 +246,11 @@ public class GameplayBoundaryTest {
 
         TransactionResult res = txManager.execute(req);
         assert !res.success() : "Should fail with stale revision";
-        assert res.error() != null && res.error().contains("revision") : "Error should mention revision";
+        // DESIGN_PHASE6_CAMPAIGN_STATE.md:49 and PHASE6A_REPORT.md:29 fix the wire
+        // error code as the literal STALE_REVISION; assert it exactly rather than
+        // with a case-insensitive substring, which would accept any spelling.
+        assert "STALE_REVISION".equals(res.error())
+            : "Error should be STALE_REVISION (got " + res.error() + ")";
     }
 
     // 9. Persistence round-trip survives mutation
