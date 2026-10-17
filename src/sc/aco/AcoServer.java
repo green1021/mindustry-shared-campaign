@@ -91,6 +91,8 @@ public class AcoServer {
             handleClaimRequest(f, out);
         } else if (f.type() == AcoMessageType.SECTOR_JOIN_REQUEST.id) { // New
             handleJoinRequest(f, out);
+        } else if (f.type() == AcoMessageType.SECTOR_RELEASE.id) {
+            handleReleaseRequest(f, out);
         } else if (f.type() == AcoMessageType.GLOBAL_RESOURCE_REQUEST.id) {
             handleResourceRequest(f, out);
         } else if (f.type() == AcoMessageType.RESEARCH_REQUEST.id) {
@@ -181,9 +183,18 @@ public class AcoServer {
 
     private void handleClaimRequest(AcoFrame f, OutputStream out) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
+        // sectorKey|sessionId|deviceId|revision  (4 fields; split(-1) keeps trailing empties)
         String[] p = payload.split("\\|", -1);
-        if (p.length < 5) return;
+        if (p.length < 4) return;
         authority.handleClaimRequest(p[0], p[1], p[2], Long.parseLong(p[3]), out);
+    }
+
+    private void handleReleaseRequest(AcoFrame f, OutputStream out) throws IOException {
+        String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
+        // sectorKey|sessionId|ownershipVersion
+        String[] p = payload.split("\\|", -1);
+        if (p.length < 3) return;
+        authority.handleReleaseRequest(p[0], p[1], Long.parseLong(p[2]), out);
     }
 
     private void handleMigrationRequest(AcoFrame f, OutputStream out) throws IOException {

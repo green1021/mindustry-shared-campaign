@@ -78,6 +78,16 @@ CANONICAL = [
         'expected': 5,
         'requires_assertions': True,
     },
+    {
+        # M2 vertical slice: claim -> join -> release over real TCP with a stub
+        # game runtime. The production runtime (real NetServer bind) stays
+        # ENVIRONMENT-BLOCKED on a headless host; see the test's class comment.
+        'name': 'AcoVerticalSliceTest',
+        'main': 'tests.AcoVerticalSliceTest',
+        'sources': ['tests/AcoVerticalSliceTest.java'],
+        'expected': 6,
+        'requires_assertions': True,
+    },
 ]
 
 

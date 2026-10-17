@@ -41,8 +41,19 @@ public final class AcoController implements sc.CampaignActions {
     private int authorityPort;
     private volatile boolean connected;
 
+    private SectorRuntime runtimeOverride;
+
     public AcoController(String dataDirName) {
         this.storageDir = Paths.get(dataDirName);
+    }
+
+    /**
+     * Substitute the game-runtime adapter used by the authority (headless tests
+     * inject a stub; production leaves the default {@link SectorRuntimeAdapter}).
+     * Must be called before {@link #init()}.
+     */
+    public void setSectorRuntime(SectorRuntime runtime) {
+        this.runtimeOverride = runtime;
     }
 
     /** Small holder so the P2 manager and migration manager share one instance. */
@@ -67,6 +78,9 @@ public final class AcoController implements sc.CampaignActions {
 
         this.txManager = new GlobalTransactionManager(globalState, new GlobalBank(globalState, persistence));
         this.authority = new CampaignAuthority(registry, persistence);
+        if (runtimeOverride != null) {
+            this.authority.setRuntime(runtimeOverride);
+        }
         this.assignment = new AcoAssignment();
         this.p2Manager = assignment.p2;
         this.migrationManager = new AcoMigrationManager(p2Manager, null);
@@ -84,6 +98,7 @@ public final class AcoController implements sc.CampaignActions {
 
         this.syncPort = syncPort;
         this.sectorPort = sectorPort;
+        this.authority.setP2Port(sectorPort);
         this.server = new AcoServer(syncPort, migrationManager, authority, registry, globalState, txManager);
         server.start();
         this.hosting = true;
@@ -141,6 +156,70 @@ public final class AcoController implements sc.CampaignActions {
             Log.warn("ACO_CONNECT_FAILED host=@ port=@ reason=@", host, port, e.getMessage());
             return false;
         }
+    }
+
+    // --- Verified vertical-slice operations (real socket, bounded) ---
+
+    /**
+     * Claim a sector on the connected authority. Returns the raw
+     * {@code sectorKey|sessionId|OK|ownershipVersion|revision} response, or null
+     * when not connected or the exchange failed.
+     */
+    public synchronized String requestClaim(String sectorKey, String sessionId, String deviceId, long revision) {
+        String payload = sectorKey + "|" + sessionId + "|" + deviceId + "|" + revision;
+        return roundTrip(AcoMessageType.SECTOR_CLAIM_REQUEST, payload);
+    }
+
+    /** Join (resolve endpoint of) a sector on the connected authority. */
+    public synchronized String requestJoin(String sectorKey) {
+        return roundTrip(AcoMessageType.SECTOR_JOIN_REQUEST, sectorKey);
+    }
+
+    /** Release a held sector on the connected authority. */
+    public synchronized String requestRelease(String sectorKey, String sessionId, long ownershipVersion) {
+        String payload = sectorKey + "|" + sessionId + "|" + ownershipVersion;
+        return roundTrip(AcoMessageType.SECTOR_RELEASE, payload);
+    }
+
+    /** Send one request frame and read one response frame over the live socket. */
+    private String roundTrip(AcoMessageType requestType, String payload) {
+        if (authoritySocket == null || authoritySocket.isClosed()) {
+            Log.warn("ACO_ROUNDTRIP_NOT_CONNECTED type=@", requestType);
+            return null;
+        }
+        try {
+            OutputStream out = authoritySocket.getOutputStream();
+            InputStream in = authoritySocket.getInputStream();
+
+            AcoFrame req = new AcoFrame((byte) 1, requestType.id, 1,
+                payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.write(req.encode());
+            out.flush();
+
+            byte[] header = new byte[AcoFrame.HEADER_SIZE];
+            if (!readFully(in, header)) return null;
+            ByteBuffer hb = ByteBuffer.wrap(header);
+            int type = hb.get(1);
+            int len = hb.getInt(6);
+            if (len < 0 || len > AcoFrame.MAX_PAYLOAD) return null;
+            byte[] body = new byte[len];
+            if (!readFully(in, body)) return null;
+
+            return new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Log.warn("ACO_ROUNDTRIP_FAILED type=@ reason=@", requestType, e.getMessage());
+            return null;
+        }
+    }
+
+    private static boolean readFully(InputStream in, byte[] buf) throws IOException {
+        int total = 0;
+        while (total < buf.length) {
+            int r = in.read(buf, total, buf.length - total);
+            if (r == -1) return false;
+            total += r;
+        }
+        return true;
     }
 
     // --- sc.CampaignActions (headless-testable UI seam) ---

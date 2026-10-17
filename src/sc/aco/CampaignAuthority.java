@@ -10,21 +10,38 @@ public class CampaignAuthority {
 
     private final CampaignPersistence persistence;
 
+    private SectorRuntime adapter = new SectorRuntimeAdapter();
+
+    /** Host/port advertised as the sector endpoint when a claim succeeds. */
+    private String p2Host = "127.0.0.1";
+    private int p2Port = 6567;
+
     public CampaignAuthority(SectorRegistry registry, CampaignPersistence persistence) {
         this.registry = registry;
         this.persistence = persistence;
     }
 
-    private final SectorRuntimeAdapter adapter = new SectorRuntimeAdapter();
+    /** Configure the endpoint advertised for claimed sectors (the P2 host port). */
+    public void setP2Port(int port) {
+        this.p2Port = port;
+    }
+
+    /** Substitute the game-runtime adapter (headless tests use a stub). */
+    public void setRuntime(SectorRuntime adapter) {
+        if (adapter != null) {
+            this.adapter = adapter;
+        }
+    }
 
     public void handleClaimRequest(String sectorKey, String sessionId, String deviceId, long revision, OutputStream out) throws IOException {
         Log.info("CLAIM_REQUEST: Session @ for sector @ rev @", sessionId, sectorKey, revision);
-        
+
         try {
             if (adapter.initializeSector(sectorKey, String.valueOf(revision))) {
-                if (adapter.startP2(6567)) {
+                if (adapter.startP2(p2Port)) {
                     boolean success = registry.claimSector(sectorKey, sessionId, revision);
                     if (success) {
+                        registry.updateEndpoint(sectorKey, sessionId, p2Endpoint());
                         SectorOwnership own = registry.get(sectorKey);
                         String payload = sectorKey + "|" + sessionId + "|OK|" + own.ownershipVersion + "|" + own.revisionVersion;
                         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_CLAIM_RESULT.id, 0, payload.getBytes()).encode());
@@ -39,6 +56,10 @@ public class CampaignAuthority {
 
         String payload = sectorKey + "|" + sessionId + "|FAIL|Sector runtime init failed";
         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_CLAIM_RESULT.id, 0, payload.getBytes()).encode());
+    }
+
+    private String p2Endpoint() {
+        return p2Host + ":" + p2Port;
     }
 
     public void handleReleaseRequest(String sectorKey, String sessionId, long ownershipVersion, OutputStream out) throws IOException {

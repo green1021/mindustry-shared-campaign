@@ -6,8 +6,9 @@ import mindustry.game.Gamemode;
 import mindustry.type.SectorPreset;
 import sc.SectorStore;
 
-public class SectorRuntimeAdapter {
+public class SectorRuntimeAdapter implements SectorRuntime {
 
+    @Override
     public boolean initializeSector(String sectorKey, String revision) throws Exception {
         SectorPreset preset = Vars.content.sectors().find(s -> s.toString().equals(sectorKey));
         if (preset == null) {
