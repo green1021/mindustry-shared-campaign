@@ -26,6 +26,18 @@ public class CampaignAuthority {
         this.p2Port = port;
     }
 
+    /**
+     * The persistence rooted at the campaign's configured storage directory.
+     *
+     * <p>Exposed so {@link AcoServer} persists state to the same directory the
+     * authority recovers from. It previously built its own
+     * {@code new CampaignPersistence(Paths.get("."))}, which wrote the campaign
+     * state into the process working directory instead.
+     */
+    public CampaignPersistence getPersistence() {
+        return persistence;
+    }
+
     /** Substitute the game-runtime adapter (headless tests use a stub). */
     public void setRuntime(SectorRuntime adapter) {
         if (adapter != null) {

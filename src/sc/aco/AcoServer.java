@@ -123,10 +123,21 @@ public class AcoServer {
         TransactionResult res = txManager.execute(req);
         String responsePayload = res.operationId() + "|" + res.success() + "|" + res.error() + "|" + res.newRevision() + "|" + res.newBalance();
         out.write(new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id, 0, responsePayload.getBytes()).encode());
-        
+
         if (res.success()) {
-            broadcast(AcoMessageType.GLOBAL_STATE_SYNC, new CampaignPersistence(java.nio.file.Paths.get(".")).toJson(globalState).getBytes());
+            broadcastStateSync();
         }
+    }
+
+    /**
+     * Push the campaign snapshot to every session.
+     *
+     * <p>Serializes through the authority's own {@link CampaignPersistence}, rooted
+     * at the configured storage directory. This used to build a throwaway
+     * {@code CampaignPersistence(Paths.get("."))} per broadcast.
+     */
+    private void broadcastStateSync() {
+        broadcast(AcoMessageType.GLOBAL_STATE_SYNC, authority.getPersistence().toJson(globalState).getBytes());
     }
     
     private void handleResearchRequest(AcoFrame f, OutputStream out) throws IOException {
@@ -138,9 +149,9 @@ public class AcoServer {
         // For now, just acknowledge
         String response = tech + "|SUCCESS|0|"; // tech|status|revision
         out.write(new AcoFrame((byte)1, AcoMessageType.RESEARCH_RESPONSE.id, 0, response.getBytes()).encode());
-        
+
         // Broadcast sync if successful
-        broadcast(AcoMessageType.GLOBAL_STATE_SYNC, new CampaignPersistence(java.nio.file.Paths.get(".")).toJson(globalState).getBytes());
+        broadcastStateSync();
     }
 
     private void handleSectorCompletion(AcoFrame f, OutputStream out) throws IOException {
@@ -167,13 +178,17 @@ public class AcoServer {
         globalState.globalRevision++;
         globalState.processedOperations.put(opId, true);
         
-        // Persist
-        new CampaignPersistence(java.nio.file.Paths.get(".")).save(globalState);
-        
+        // Persist to the campaign's configured storage directory (not the process CWD).
+        try {
+            authority.getPersistence().save(globalState);
+        } catch (IOException e) {
+            Log.err("ACO_COMPLETION_PERSIST_FAILED sector=@", sectorId, e);
+        }
+
         String response = sectorId + "|SUCCESS|" + globalState.globalRevision + "|";
         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_COMPLETION_EVENT.id, 0, response.getBytes()).encode());
-        
-        broadcast(AcoMessageType.GLOBAL_STATE_SYNC, new CampaignPersistence(java.nio.file.Paths.get(".")).toJson(globalState).getBytes());
+
+        broadcastStateSync();
     }
     
     private void handleJoinRequest(AcoFrame f, OutputStream out) throws IOException {

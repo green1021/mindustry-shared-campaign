@@ -97,6 +97,15 @@ CANONICAL = [
         'expected': 4,
         'requires_assertions': True,
     },
+    {
+        # Regression: a completion must persist into the configured storage dir,
+        # not into the process CWD via a throwaway CampaignPersistence(".").
+        'name': 'AcoPersistenceLocationTest',
+        'main': 'tests.AcoPersistenceLocationTest',
+        'sources': ['tests/AcoPersistenceLocationTest.java'],
+        'expected': 2,
+        'requires_assertions': True,
+    },
 ]
 
 
