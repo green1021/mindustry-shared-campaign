@@ -2,8 +2,6 @@ package sc.aco;
 
 import arc.util.Log;
 import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class GlobalBank {
     private final GlobalCampaignState state;
@@ -18,25 +16,26 @@ public class GlobalBank {
         if (req == null) {
             return new TransactionResult("null", false, "INVALID_REQUEST", 0, 0);
         }
-        if (req.operationId() == null || req.operationId().isEmpty() ||
-            req.sessionId() == null || req.sessionId().isEmpty() ||
-            req.sectorId() == null || req.sectorId().isEmpty() ||
-            req.resourceType() == null || req.resourceType().isEmpty() ||
+        if (req.operationId() == null || req.operationId().isBlank() ||
+            req.sessionId() == null || req.sessionId().isBlank() ||
+            req.sectorId() == null || req.sectorId().isBlank() ||
+            req.resourceType() == null || req.resourceType().isBlank() || req.resourceType().contains("|") ||
             req.operationType() == null) {
             String opId = req.operationId() != null ? req.operationId() : "unknown";
-            return new TransactionResult(opId, false, "MISSING_REQUIRED_FIELDS", state.globalRevision, 0);
+            return new TransactionResult(opId, false, "INVALID_REQUEST_FIELDS", state.globalRevision, getBalance(req.resourceType()));
         }
 
-        Log.info("BANK_REQ: " + req.operationType() + " val: " + req.amount() + " cur: " + getBalance(req.resourceType()));
-        // Idempotency check
+        if (req.amount() <= 0) {
+            return new TransactionResult(req.operationId(), false, "INVALID_AMOUNT", state.globalRevision, getBalance(req.resourceType()));
+        }
+
+        // Idempotency check with full payload validation
         if (state.processedOperations.containsKey(req.operationId())) {
-            Object op = state.processedOperations.get(req.operationId());
-            if (op instanceof TransactionResult) {
-                Log.info("GLOBAL_BANK: Duplicate operation @", req.operationId());
-                return (TransactionResult) op;
+            Object stored = state.processedOperations.get(req.operationId());
+            if (!(stored instanceof TransactionResult)) {
+                return new TransactionResult(req.operationId(), false, "INCOMPATIBLE_IDEMPOTENCY_TYPE", state.globalRevision, getBalance(req.resourceType()));
             }
-            Log.err("GLOBAL_BANK: Incompatible idempotency type for @", req.operationId());
-            return new TransactionResult(req.operationId(), false, "INCOMPATIBLE_IDEMPOTENCY_TYPE", state.globalRevision, getBalance(req.resourceType()));
+            return (TransactionResult) stored;
         }
 
         // Revision validation
@@ -47,59 +46,36 @@ public class GlobalBank {
         }
 
         long current = getBalance(req.resourceType());
-        long delta = req.amount();
         long newBalance = current;
         boolean success = false;
         String error = null;
 
         switch (req.operationType()) {
-            case CREDIT:
-                if (delta <= 0) {
-                    error = "INVALID_AMOUNT";
-                } else if (current > Long.MAX_VALUE - delta) {
+            case CREDIT, DEPOSIT -> {
+                if (current > Long.MAX_VALUE - req.amount()) {
                     error = "OVERFLOW";
                 } else {
-                    newBalance = current + delta;
+                    newBalance = current + req.amount();
                     success = true;
                 }
-                break;
-            case DEBIT:
-                if (delta <= 0) {
-                    error = "INVALID_AMOUNT";
-                } else if (current < delta) {
+            }
+            case DEBIT, WITHDRAW -> {
+                if (current < req.amount()) {
                     error = "INSUFFICIENT_BALANCE";
                 } else {
-                    newBalance = current - delta;
+                    newBalance = current - req.amount();
                     success = true;
                 }
-                break;
-            case WITHDRAW:
-                if (delta <= 0) {
-                    error = "INVALID_AMOUNT";
-                } else if (current >= delta) {
-                    newBalance = current - delta;
-                    success = true;
-                } else {
-                    error = "INSUFFICIENT_BALANCE";
-                }
-                break;
-            case DEPOSIT:
-                if (delta <= 0) {
-                    error = "INVALID_AMOUNT";
-                } else if (current > Long.MAX_VALUE - delta) {
-                    error = "OVERFLOW";
-                } else {
-                    newBalance = current + delta;
-                    success = true;
-                }
-                break;
+            }
         }
-
+        
         TransactionResult result = new TransactionResult(req.operationId(), success, error, success ? state.globalRevision + 1 : state.globalRevision, success ? newBalance : current);
 
         if (success) {
             try {
+                // WAL append first
                 persistence.appendWAL(new TransactionLogEntry(req, result, System.currentTimeMillis()));
+                // Save state ONLY after WAL is successfully written
                 persistence.save(state);
             } catch (IOException e) {
                 Log.err("PERSISTENCE_FAILURE", e);

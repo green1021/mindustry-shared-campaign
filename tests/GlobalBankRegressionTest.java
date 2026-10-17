@@ -53,7 +53,7 @@ public class GlobalBankRegressionTest {
         );
         TransactionResult resMissing = bank.process(reqMissing);
         assert !resMissing.success() : "Should fail on missing field";
-        assert "MISSING_REQUIRED_FIELDS".equals(resMissing.error()) : "Error should be MISSING_REQUIRED_FIELDS";
+        assert "INVALID_REQUEST_FIELDS".equals(resMissing.error()) : "Error should be INVALID_REQUEST_FIELDS";
         System.out.println("[PASS] Missing fields check");
 
         // 5. Insufficient funds / underflow check

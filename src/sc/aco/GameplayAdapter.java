@@ -45,6 +45,16 @@ public class GameplayAdapter {
     }
 
     // Production-ready hook for resource events
+    public void requestWithdrawal(Item item, long amount, String opId, String sessionId, String sectorId, long revision) {
+        if (item == null) {
+            throw new IllegalArgumentException("Withdrawal item cannot be null");
+        }
+        // Enforce P2 boundary: Mutation is REQUEST, not local modification
+        client.sendGlobalResourceRequest(item.name, amount, opId, "WITHDRAW", revision, sessionId, sectorId);
+    }
+
+    /** @deprecated Use 7-field version. */
+    @Deprecated
     public void requestWithdrawal(Item item, long amount, String opId) {
         if (item == null) {
             throw new IllegalArgumentException("Withdrawal item cannot be null");

@@ -70,9 +70,10 @@ public class AcoClient {
         }
     }
 
-    /** Legacy 4-field request kept for basic GameplayAdapter compatibility until full migration. */
+    /** @deprecated Use 7-field version. This overload now emits placeholders. */
+    @Deprecated
     public void sendGlobalResourceRequest(String item, long amount, String opId, String opType) {
-        sendGlobalResourceRequest(item, amount, opId, opType, 0, "unknown", "unknown");
+        sendGlobalResourceRequest(item, amount, opId, opType, 0, "legacy-session", "legacy-sector");
     }
 
     public void sendResearchRequest(String tech) {
