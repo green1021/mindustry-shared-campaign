@@ -82,7 +82,7 @@ public class GameplayBoundaryTest {
         // Verify fail-fast on null item
         boolean caughtNull = false;
         try {
-            adapter.requestWithdrawal(null, 100L, "op-null");
+            adapter.requestWithdrawal(null, 100L, "op-null", "sector-1", 7L);
         } catch (IllegalArgumentException e) {
             caughtNull = true;
         }
@@ -90,17 +90,19 @@ public class GameplayBoundaryTest {
         assert client.lastFrame == null : "No frame should be emitted on null item";
 
         // Create a legitimate item instance
-        adapter.requestWithdrawal(copperItem, 100L, "op-001");
+        adapter.requestWithdrawal(copperItem, 100L, "op-001", "sector-1", 7L);
         assert client.lastFrame != null : "Frame should be sent";
         assert client.lastFrame.type() == AcoMessageType.GLOBAL_RESOURCE_REQUEST.id : "Correct message type";
 
         String payload = new String(client.lastFrame.payload());
-        String[] parts = payload.split("\\|");
-        assert parts.length == 7 : "Payload format should now be 7 fields";
+        String[] parts = payload.split("\\|", -1);
+        assert parts.length == 6 : "Payload format is 6 fields (no client-supplied identity)";
         assert parts[0].equals("op-001") : "OpId should be index 0";
-        assert parts[4].equals("copper") : "Item name should be index 4";
-        assert parts[5].equals("100") : "Amount should be index 5";
-        assert parts[6].equals("WITHDRAW") : "OpType should be index 6";
+        assert parts[1].equals("sector-1") : "Sector should be index 1";
+        assert parts[2].equals("7") : "Expected revision should be index 2";
+        assert parts[3].equals("copper") : "Item name should be index 3";
+        assert parts[4].equals("100") : "Amount should be index 4";
+        assert parts[5].equals("WITHDRAW") : "OpType should be index 5";
     }
 
     // 2. Research request encoding
@@ -293,7 +295,7 @@ public class GameplayBoundaryTest {
         GameplayAdapter adapter = new GameplayAdapter(client);
 
         // The adapter only sends requests, never mutates state directly
-        adapter.requestWithdrawal(copperItem, 100L, "op-1");
+        adapter.requestWithdrawal(copperItem, 100L, "op-1", "sector-1", 0L);
         client.sendResearchRequest("test-tech");
         client.sendSectorCompletion("test-sector");
 

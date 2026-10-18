@@ -220,7 +220,7 @@ public class AcoClientStateSyncTest {
             assert view.getLocalCache().globalRevision == 0
                 : "a fresh view should start at revision 0, got " + view.getLocalCache().globalRevision;
 
-            String res = h.producer.requestResource("op-1", "sess-A", "groundZero", 0,
+            String res = h.producer.requestResource("op-1", "groundZero", 0,
                 "copper", 100, GlobalResourceRequest.OperationType.CREDIT);
             assert res != null && res.startsWith("op-1|true|")
                 : "credit should succeed, got " + res;

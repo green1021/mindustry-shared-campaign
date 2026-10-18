@@ -45,7 +45,13 @@ public class CampaignAuthority {
         }
     }
 
-    public void handleClaimRequest(String sectorKey, String sessionId, String deviceId, long revision, OutputStream out) throws IOException {
+    /**
+     * Handle a sector claim.
+     *
+     * @return true when the claim succeeded, in which case the calling connection
+     *         is bound as the sector's host (see {@code AcoServer.handleClaimRequest})
+     */
+    public boolean handleClaimRequest(String sectorKey, String sessionId, String deviceId, long revision, OutputStream out) throws IOException {
         Log.info("CLAIM_REQUEST: Session @ for sector @ rev @", sessionId, sectorKey, revision);
 
         try {
@@ -57,7 +63,7 @@ public class CampaignAuthority {
                         SectorOwnership own = registry.get(sectorKey);
                         String payload = sectorKey + "|" + sessionId + "|OK|" + own.ownershipVersion + "|" + own.revisionVersion;
                         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_CLAIM_RESULT.id, 0, payload.getBytes()).encode());
-                        return;
+                        return true;
                     }
                 }
             }
@@ -68,25 +74,32 @@ public class CampaignAuthority {
 
         String payload = sectorKey + "|" + sessionId + "|FAIL|Sector runtime init failed";
         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_CLAIM_RESULT.id, 0, payload.getBytes()).encode());
+        return false;
     }
 
     private String p2Endpoint() {
         return p2Host + ":" + p2Port;
     }
 
-    public void handleReleaseRequest(String sectorKey, String sessionId, long ownershipVersion, OutputStream out) throws IOException {
+    /**
+     * Handle a sector release.
+     *
+     * @return true when the release succeeded (ownership was actually released)
+     */
+    public boolean handleReleaseRequest(String sectorKey, String sessionId, long ownershipVersion, OutputStream out) throws IOException {
         Log.info("RELEASE_REQUEST: Session @ for sector @ ver @", sessionId, sectorKey, ownershipVersion);
         
         SectorOwnership own = registry.get(sectorKey);
         if (own == null || !own.ownerSessionId.equals(sessionId) || own.ownershipVersion != ownershipVersion) {
             String payload = sectorKey + "|" + sessionId + "|FAIL|Invalid ownership version or not owner";
             out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_RELEASE.id, 0, payload.getBytes()).encode());
-            return;
+            return false;
         }
         
         registry.releaseSector(sectorKey, sessionId);
         String payload = sectorKey + "|" + sessionId + "|OK|" + registry.get(sectorKey).ownershipVersion;
         out.write(new AcoFrame((byte)1, AcoMessageType.SECTOR_RELEASE.id, 0, payload.getBytes()).encode());
+        return true;
     }
 
     public void handleTransferRequest(String sectorKey, String fromSession, String toSession, long newRevision, OutputStream out) throws IOException {

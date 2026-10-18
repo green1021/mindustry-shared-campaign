@@ -204,10 +204,12 @@ public final class AcoController implements sc.CampaignActions {
      * Submit a global resource transaction to the connected authority.
      * Payload order matches {@link GlobalResourceRequest}'s components.
      */
-    public synchronized String requestResource(String operationId, String sessionId, String sectorId,
+    public synchronized String requestResource(String operationId, String sectorId,
                                                long expectedGlobalRevision, String resourceType, long amount,
                                                GlobalResourceRequest.OperationType operationType) {
-        String payload = operationId + "|" + sessionId + "|" + sectorId + "|" + expectedGlobalRevision
+        // No session identity is sent: the authority binds the session to the
+        // authenticated connection (see AcoServer.handleResourceRequest).
+        String payload = operationId + "|" + sectorId + "|" + expectedGlobalRevision
             + "|" + resourceType + "|" + amount + "|" + operationType.name();
         return roundTrip(AcoMessageType.GLOBAL_RESOURCE_REQUEST, payload,
             AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id);

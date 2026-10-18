@@ -14,6 +14,12 @@ public class AcoServer {
     private boolean running = true;
     private final Map<String, AcoTransferSession> activeTransfers = new ConcurrentHashMap<>();
     private final Map<String, AcoSession> sessions = new ConcurrentHashMap<>();
+    /**
+     * Server-side sector-host bindings: sector key to the connection session that
+     * claimed (or was first authorized for) it. Used by resource-request
+     * authorization; populated from server-derived connection identity only.
+     */
+    private final Map<String, String> hostedConnections = new ConcurrentHashMap<>();
     private final AcoMigrationManager migrationManager;
     private final SectorRegistry registry;
     private final CampaignAuthority authority;
@@ -63,7 +69,7 @@ public class AcoServer {
     private void handle(Socket s) {
         try (s; InputStream in = s.getInputStream(); OutputStream out = s.getOutputStream()) {
             ByteBuffer buf = ByteBuffer.allocate(65536);
-            String sessionId = "temp-" + s.getPort(); // placeholder
+            String sessionId = java.util.UUID.randomUUID().toString(); // server-generated connection identity (binding, not authentication)
             registerSession(sessionId, "default", out);
             while (running) {
                 int read = in.read(buf.array(), buf.position(), buf.remaining());
@@ -73,14 +79,22 @@ public class AcoServer {
                 while (buf.remaining() >= AcoFrame.HEADER_SIZE) {
                     AcoFrame frame = AcoFrame.decode(buf);
                     if (frame == null) break;
-                    process(frame, out);
+                    process(frame, out, sessionId);
                 }
                 buf.compact();
             }
         } catch (Exception e) { Log.err("ACO_CONNECTION_ERROR", e); }
     }
 
-    private void process(AcoFrame f, OutputStream out) throws IOException {
+    /**
+     * Dispatch one frame.
+     *
+     * <p>{@code connSessionId} is the server-generated identity of THIS connection.
+     * It is the only session identity the handlers below accept: peer-supplied
+     * session strings in payloads are never trusted for identity or authorization
+     * (authentication is not yet implemented — see {@code handleResourceRequest}).
+     */
+    private void process(AcoFrame f, OutputStream out, String connSessionId) throws IOException {
         if (f.type() == AcoMessageType.PING.id) {
             out.write(new AcoFrame(f.version(), AcoMessageType.PONG.id, f.msgId(), new byte[0]).encode());
         } else if (f.type() == AcoMessageType.SECTOR_MIGRATION_REQUEST.id) {
@@ -88,13 +102,13 @@ public class AcoServer {
         } else if (f.type() == AcoMessageType.SECTOR_MIGRATION_CONFIRM.id) {
             handleConfirmation(f);
         } else if (f.type() == AcoMessageType.SECTOR_CLAIM_REQUEST.id) {
-            handleClaimRequest(f, out);
+            handleClaimRequest(f, out, connSessionId);
         } else if (f.type() == AcoMessageType.SECTOR_JOIN_REQUEST.id) { // New
-            handleJoinRequest(f, out);
+            handleJoinRequest(f, out, connSessionId);
         } else if (f.type() == AcoMessageType.SECTOR_RELEASE.id) {
-            handleReleaseRequest(f, out);
+            handleReleaseRequest(f, out, connSessionId);
         } else if (f.type() == AcoMessageType.GLOBAL_RESOURCE_REQUEST.id) {
-            handleResourceRequest(f, out);
+            handleResourceRequest(f, out, connSessionId);
         } else if (f.type() == AcoMessageType.RESEARCH_REQUEST.id) {
             handleResearchRequest(f, out);
         } else if (f.type() == AcoMessageType.SECTOR_COMPLETION_EVENT.id) {
@@ -110,27 +124,47 @@ public class AcoServer {
         }
     }
 
-    private void handleResourceRequest(AcoFrame f, OutputStream out) throws IOException {
+    /**
+     * Handle a global resource request.
+     *
+     * <p>Canonical payload schema (6 fields):
+     * {@code operationId|sectorId|expectedGlobalRevision|resourceType|amount|operationType}.
+     * The session identity is NOT part of the payload: it is derived from this
+     * server-authenticated connection {@code connSessionId}, never from
+     * client-supplied text. The removed 7-field (client-identity) and legacy
+     * 4-field payloads are rejected explicitly.
+     *
+     * <p>Documented limitation: peers are bound to their connection and several
+     * checks are enforced server-side, but real peer authentication (proving WHO
+     * runs a connection) is not implemented — connection identity is the strongest
+     * claim the current transport supports.
+     */
+    private void handleResourceRequest(AcoFrame f, OutputStream out, String connSessionId) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
         String[] parts = payload.split("\\|", -1);
 
+        if (parts.length != 6) {
+            // Explicit rejection of removed formats and any other arity.
+            respondError(out, "", "INVALID_REQUEST_FIELDS",
+                "unsupported payload arity " + parts.length + "; expected 6 fields");
+            return;
+        }
+
         GlobalResourceRequest req;
-        if (parts.length == 7) {
+        try {
             req = new GlobalResourceRequest(
-                parts[0], parts[1], parts[2], Long.parseLong(parts[3]), parts[4], Long.parseLong(parts[5]),
-                GlobalResourceRequest.OperationType.valueOf(parts[6])
-            );
-        } else if (parts.length == 4) {
-            // Legacy/Client format: item|amount|opId|opType
-            // mapped to: opId, "unknown", "unknown", 0, item, amount, opType
-            req = new GlobalResourceRequest(
-                parts[2], "unknown", "unknown", 0, parts[0], Long.parseLong(parts[1]),
-                GlobalResourceRequest.OperationType.valueOf(parts[3])
-            );
-        } else {
-            // Malformed
-            out.write(new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id, 0,
-                "|false|MALFORMED_FIELD_COUNT|0|0".getBytes()).encode());
+                parts[0], connSessionId, parts[1], Long.parseLong(parts[2]), parts[3], Long.parseLong(parts[4]),
+                GlobalResourceRequest.OperationType.valueOf(parts[5]));
+        } catch (IllegalArgumentException e) {
+            respondError(out, parts[0], "INVALID_REQUEST_FIELDS", "malformed field");
+            return;
+        }
+
+        // Authorization: a connection may only transact on sectors it hosts, or on
+        // campaign-open sectors (the first authorized connection becomes host).
+        if (!isSectorAuthorized(parts[1], connSessionId)) {
+            respondError(out, parts[0], "UNAUTHORIZED_SECTOR",
+                "session not authorized for sector " + parts[1]);
             return;
         }
 
@@ -141,6 +175,32 @@ public class AcoServer {
         if (res.success()) {
             broadcastStateSync();
         }
+    }
+
+    /**
+     * Server-side authorization for resource transactions on {@code sectorKey}:
+     * only the connection bound as the sector host may transact there; a campaign
+     * sector that no connection hosts yet opens for the requesting connection.
+     */
+    private boolean isSectorAuthorized(String sectorKey, String connSessionId) {
+        if (sectorKey == null || sectorKey.isBlank()) return false;
+        String host = hostedConnections.get(sectorKey);
+        if (host != null) {
+            return host.equals(connSessionId);
+        }
+        if (globalState != null && globalState.unlockedSectors.contains(sectorKey)) {
+            hostedConnections.putIfAbsent(sectorKey, connSessionId);
+            return true;
+        }
+        return false;
+    }
+
+    /** Explicit rejection responder; the operation id field is always present. */
+    private void respondError(OutputStream out, String operationId, String error, String detail) throws IOException {
+        String curRevision = globalState == null ? "0" : Long.toString(globalState.globalRevision);
+        String responsePayload = (operationId == null ? "" : operationId) + "|false|" + error + "|" + curRevision + "|0";
+        out.write(new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_RESPONSE.id, 0, responsePayload.getBytes()).encode());
+        Log.warn("ACO_RESOURCE_REJECTED: @ (@)", error, detail);
     }
 
     /**
@@ -238,25 +298,35 @@ public class AcoServer {
         broadcastStateSync();
     }
 
-    private void handleJoinRequest(AcoFrame f, OutputStream out) throws IOException {
+    private void handleJoinRequest(AcoFrame f, OutputStream out, String connSessionId) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
-        authority.handleJoinRequest(payload, "session-id", out); // Simplified
+        // The joiner is identified by its server-bound connection, never by
+        // client-supplied payload text.
+        authority.handleJoinRequest(payload, connSessionId, out);
     }
 
-    private void handleClaimRequest(AcoFrame f, OutputStream out) throws IOException {
+    private void handleClaimRequest(AcoFrame f, OutputStream out, String connSessionId) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
         // sectorKey|sessionId|deviceId|revision  (4 fields; split(-1) keeps trailing empties)
         String[] p = payload.split("\\|", -1);
         if (p.length < 4) return;
-        authority.handleClaimRequest(p[0], p[1], p[2], Long.parseLong(p[3]), out);
+        boolean ok = authority.handleClaimRequest(p[0], p[1], p[2], Long.parseLong(p[3]), out);
+        if (ok) {
+            // Bind the sector to the claiming CONNECTION: resource transactions are
+            // later authorized against this server-side binding only.
+            hostedConnections.put(p[0], connSessionId);
+        }
     }
 
-    private void handleReleaseRequest(AcoFrame f, OutputStream out) throws IOException {
+    private void handleReleaseRequest(AcoFrame f, OutputStream out, String connSessionId) throws IOException {
         String payload = new String(f.payload(), java.nio.charset.StandardCharsets.UTF_8);
         // sectorKey|sessionId|ownershipVersion
         String[] p = payload.split("\\|", -1);
         if (p.length < 3) return;
-        authority.handleReleaseRequest(p[0], p[1], Long.parseLong(p[2]), out);
+        boolean ok = authority.handleReleaseRequest(p[0], p[1], Long.parseLong(p[2]), out);
+        if (ok) {
+            hostedConnections.remove(p[0]);
+        }
     }
 
     private void handleMigrationRequest(AcoFrame f, OutputStream out) throws IOException {

@@ -130,7 +130,8 @@ public class AcoBroadcastDesyncTest {
 
     /** Transaction ids are opaque strings here; uniqueness makes retries visible. */
     private static String credit(Pair p, String opId, long amount) {
-        return p.client.requestResource(opId, "sess-A", "groundZero", 0, "copper", amount,
+        // No session identity: the server binds it from the connection.
+        return p.client.requestResource(opId, "groundZero", 0, "copper", amount,
             GlobalResourceRequest.OperationType.CREDIT);
     }
 
@@ -178,7 +179,7 @@ public class AcoBroadcastDesyncTest {
             long revision = 0;
             for (int i = 0; i < 4; i++) {
                 String op = "op-" + i;
-                String res = p.client.requestResource(op, "sess-A", "groundZero", revision, "copper", 10,
+                String res = p.client.requestResource(op, "groundZero", revision, "copper", 10,
                     GlobalResourceRequest.OperationType.CREDIT);
                 assert res != null : "round " + i + " resource response was null";
                 assert res.startsWith(op + "|true|") : "round " + i + " resource response: " + res;

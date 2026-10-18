@@ -58,22 +58,25 @@ public class AcoClient {
         // Implementation by integration wrapper
     }
 
-    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType, long expectedRevision, String sessionId, String sectorId) {
+    /**
+     * Send a global resource request to the authority.
+     *
+     * <p>Payload: {@code operationId|sectorId|expectedRevision|resourceType|amount|operationType}.
+     * Deliberately carries NO session identity claim: the authority derives the
+     * session from the authenticated connection and authorizes the sector
+     * server-side (see {@code AcoServer.handleResourceRequest}). The 4-argument
+     * overload that emitted placeholder identities ({@code "legacy-session"} /
+     * {@code "legacy-sector"}) is removed — a client cannot name its own identity.
+     */
+    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType, long expectedRevision, String sectorId) {
         try {
-            // protocol: operationId|sessionId|sectorId|expectedRevision|resourceType|amount|operationType
-            String payload = opId + "|" + sessionId + "|" + sectorId + "|" + expectedRevision + "|" + item + "|" + amount + "|" + opType;
+            String payload = opId + "|" + sectorId + "|" + expectedRevision + "|" + item + "|" + amount + "|" + opType;
             AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.GLOBAL_RESOURCE_REQUEST.id, 0,
                 payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);
         }
-    }
-
-    /** @deprecated Use 7-field version. This overload now emits placeholders. */
-    @Deprecated
-    public void sendGlobalResourceRequest(String item, long amount, String opId, String opType) {
-        sendGlobalResourceRequest(item, amount, opId, opType, 0, "legacy-session", "legacy-sector");
     }
 
     public void sendResearchRequest(String tech) {

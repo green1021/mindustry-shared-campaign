@@ -161,10 +161,35 @@ CANONICAL = [
         'heap': '256m',
     },
     {
+        # Strict WAL round-trip: every serialized field of a TransactionLogEntry
+        # parses and validates; malformed or incomplete records are rejected
+        # instead of being silently accepted (the reader used to be a stub that
+        # dropped all WAL data on replay).
+        'name': 'TransactionLogEntryStrictTest',
+        'main': 'tests.TransactionLogEntryStrictTest',
+        'sources': ['tests/TransactionLogEntryStrictTest.java'],
+        'expected': 7,
+        'requires_assertions': True,
+    },
+    {
+        # Server-side identity & authorization: requests are bound to the
+        # server-generated connection identity; forged, unauthorized, malformed
+        # and legacy payloads are rejected explicitly.
+        'name': 'AcoResourceAuthorizationTest',
+        'main': 'tests.AcoResourceAuthorizationTest',
+        'sources': ['tests/AcoResourceAuthorizationTest.java'],
+        'expected': 3,
+        'requires_assertions': True,
+    },
+    {
+        # Full-payload idempotency fingerprint matching, legacy records refused,
+        # and the crash-safe WAL-first commit protocol (a snapshot failure after
+        # a durable WAL append is still a committed operation; recovery replays
+        # exactly once).
         'name': 'GlobalBankRegressionTest',
         'main': 'tests.GlobalBankRegressionTest',
         'sources': ['tests/GlobalBankRegressionTest.java'],
-        'expected': 5,
+        'expected': 12,
         'requires_assertions': True,
     },
     {
