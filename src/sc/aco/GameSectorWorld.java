@@ -58,8 +58,11 @@ public class GameSectorWorld implements SectorWorldOps {
             return false;
         }
         if (bytes == null) {
-            Log.warn("SECTOR_LOAD_NO_SNAPSHOT sector=@", sectorKey);
-            return false;
+            // First entry into an unlocked sector with no prior shared snapshot.
+            // Bootstrap a clean vanilla sector on the local game thread without
+            // fabricating or overwriting snapshots on disk.
+            Log.info("SECTOR_BOOTSTRAP_FIRST_ENTRY sector=@", sectorKey);
+            return runOnGameThread(() -> bootstrapVanillaSector(sectorKey));
         }
         try {
             Files.createDirectories(scratchDir);
@@ -132,33 +135,90 @@ public class GameSectorWorld implements SectorWorldOps {
         return ok;
     }
 
-    /** Resolve {@code planet:sectorId} to a live Sector, or null when unresolvable here. */
+    /** Resolve {@code planet:sectorId} or preset name to a live Sector, or null when unresolvable here. */
     static Sector resolveSector(String sectorKey) {
-        if (sectorKey == null) return null;
+        if (sectorKey == null || sectorKey.isEmpty()) return null;
+        if (Vars.content == null) return null;
+
         int idx = sectorKey.indexOf(':');
-        if (idx <= 0 || idx == sectorKey.length() - 1) return null;
-        String planetName = sectorKey.substring(0, idx);
-        long id;
+        if (idx > 0 && idx < sectorKey.length() - 1) {
+            String planetName = sectorKey.substring(0, idx);
+            try {
+                long id = Long.parseLong(sectorKey.substring(idx + 1));
+                Planet p = null;
+                if (Vars.content.planets() != null) {
+                    for (Planet candidate : Vars.content.planets()) {
+                        if (candidate.name.equals(planetName)) { p = candidate; break; }
+                    }
+                }
+                if (p != null && p.sectors != null) {
+                    for (Sector s : p.sectors) {
+                        if (s.id == id) return s;
+                    }
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // Fallback: check sector presets by name (e.g. "groundZero", "craters")
         try {
-            id = Long.parseLong(sectorKey.substring(idx + 1));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-        if (Vars.content == null || Vars.content.planets() == null) return null;
-        Planet p = null;
-        for (Planet candidate : Vars.content.planets()) {
-            if (candidate.name.equals(planetName)) { p = candidate; break; }
-        }
-        if (p == null || p.sectors == null) return null;
-        for (Sector s : p.sectors) {
-            if (s.id == id) return s;
+            mindustry.type.SectorPreset preset = Vars.content.getByName(mindustry.ctype.ContentType.sector, sectorKey);
+            if (preset != null && preset.sector != null) {
+                return preset.sector;
+            }
+        } catch (Throwable ignored) {}
+
+        if (Vars.content.planets() != null) {
+            for (Planet p : Vars.content.planets()) {
+                if (p.sectors != null) {
+                    for (Sector s : p.sectors) {
+                        if (sectorMatches(s, sectorKey)) return s;
+                    }
+                }
+            }
         }
         return null;
     }
 
     static boolean sectorMatches(Sector s, String sectorKey) {
-        if (s == null || s.planet == null) return false;
-        return (s.planet.name + ":" + s.id).equals(sectorKey);
+        if (s == null || sectorKey == null) return false;
+        if (s.planet != null && (s.planet.name + ":" + s.id).equals(sectorKey)) return true;
+        if (s.preset != null && sectorKey.equals(s.preset.name)) return true;
+        return false;
+    }
+
+    /**
+     * Bootstrap a clean vanilla campaign sector without overwriting any existing snapshot.
+     * Called on the game thread when entering an unlocked sector that has no prior snapshot.
+     */
+    static boolean bootstrapVanillaSector(String sectorKey) {
+        if (Vars.content == null || Vars.state == null || Vars.world == null || Vars.logic == null) {
+            Log.warn("SECTOR_BOOTSTRAP_ENV_INCOMPLETE sector=@", sectorKey);
+            return false;
+        }
+        Sector s = resolveSector(sectorKey);
+        if (s == null) {
+            Log.warn("SECTOR_BOOTSTRAP_RESOLVE_FAILED sector=@", sectorKey);
+            return false;
+        }
+        try {
+            if (Vars.state.isGame()) {
+                Vars.state.set(State.menu);
+            }
+            Vars.logic.reset();
+            Vars.world.loadSector(s);
+            Vars.state.rules.sector = s;
+            arc.Events.fire(new mindustry.game.EventType.RulesLoadEvent(Vars.state.rules));
+            Vars.logic.play();
+            arc.Events.fire(new mindustry.game.EventType.SectorLaunchEvent(s));
+            arc.Events.fire(mindustry.game.EventType.Trigger.newGame);
+            Vars.state.set(State.playing);
+            boolean ok = Vars.state.isCampaign() && sectorMatches(Vars.state.getSector(), sectorKey);
+            Log.info("SECTOR_BOOTSTRAP_SUCCESS sector=@ ok=@", sectorKey, ok);
+            return ok;
+        } catch (Throwable t) {
+            Log.err("SECTOR_BOOTSTRAP_EXCEPTION sector=@", sectorKey, t);
+            return false;
+        }
     }
 
     /**
@@ -170,6 +230,14 @@ public class GameSectorWorld implements SectorWorldOps {
         if (Core.app == null) {
             Log.warn("SECTOR_WORLD_NO_APP");
             return false;
+        }
+        if (Core.app.isOnMainThread()) {
+            try {
+                return Boolean.TRUE.equals(op.call());
+            } catch (Throwable t) {
+                Log.err("SECTOR_WORLD_DIRECT_FAILED", t);
+                return false;
+            }
         }
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Boolean> result = new AtomicReference<>(false);

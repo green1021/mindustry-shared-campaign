@@ -82,7 +82,33 @@ public final class AcoController implements sc.CampaignActions {
 
     /** Configure the address friends should reach for host P2 sector servers. */
     public void setHostAdvertisedAddress(String address) {
-        this.hostAdvertisedAddress = address;
+        String valid = validateAdvertisedHost(address);
+        this.hostAdvertisedAddress = valid;
+        if (arc.Core.settings != null && valid != null) {
+            try {
+                arc.Core.settings.put("sc-advertised-host", valid);
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    public static String validateAdvertisedHost(String host) {
+        if (host == null || host.isBlank()) return null;
+        String trimmed = host.trim();
+        if (trimmed.contains(":") && !trimmed.contains("::")) {
+            int colon = trimmed.lastIndexOf(':');
+            trimmed = trimmed.substring(0, colon).trim();
+        }
+        if (trimmed.isEmpty()) return null;
+        if (trimmed.contains(" ") || trimmed.contains("/") || trimmed.contains("\\")) {
+            throw new IllegalArgumentException("Invalid host characters in: " + host);
+        }
+        return trimmed;
+    }
+
+    public static boolean isLoopback(String host) {
+        if (host == null || host.isBlank()) return true;
+        String h = host.trim().toLowerCase();
+        return h.equals("127.0.0.1") || h.equals("localhost") || h.equals("::1") || h.startsWith("127.");
     }
 
     public String getHostAdvertisedAddress() {
@@ -128,6 +154,15 @@ public final class AcoController implements sc.CampaignActions {
         this.persistence = new CampaignPersistence(storageDir);
         this.globalState = new GlobalCampaignState();
         this.globalState.campaignId = "default";
+
+        if (this.hostAdvertisedAddress == null && arc.Core.settings != null) {
+            try {
+                String saved = arc.Core.settings.getString("sc-advertised-host", null);
+                if (saved != null && !saved.isBlank()) {
+                    this.hostAdvertisedAddress = validateAdvertisedHost(saved);
+                }
+            } catch (Throwable ignored) {}
+        }
 
         try {
             this.globalState = persistence.recover();
@@ -532,12 +567,93 @@ public final class AcoController implements sc.CampaignActions {
 
     @Override
     public void hostCampaignAction(int syncPort, int sectorPort) {
-        hostCampaign(syncPort, sectorPort);
+        hostCampaignAction(syncPort, sectorPort, getHostAdvertisedAddress());
+    }
+
+    @Override
+    public void hostCampaignAction(int syncPort, int sectorPort, String advertisedHost) {
+        if (advertisedHost != null && !advertisedHost.isBlank()) {
+            setHostAdvertisedAddress(advertisedHost.trim());
+        }
+        boolean ok = hostCampaign(syncPort, sectorPort);
+        if (ok && !connected) {
+            connectToAuthority("127.0.0.1", syncPort);
+        }
     }
 
     @Override
     public void connectAction(String host, int port) {
         connectToAuthority(host, port);
+    }
+
+    @Override
+    public boolean claimSectorAction(String sectorKey) {
+        String err = claimLocalSector(sectorKey, 0);
+        if (err != null) {
+            Log.warn("ACO_CLAIM_ACTION_FAILED sector=@ reason=@", sectorKey, err);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean enterLocalSectorAction(String sectorKey) {
+        return claimSectorAction(sectorKey);
+    }
+
+    @Override
+    public boolean checkpointLocalSectorAction() {
+        String err = checkpointLocalSector();
+        if (err != null) {
+            Log.warn("ACO_CHECKPOINT_ACTION_FAILED reason=@", err);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean exitLocalSectorAction() {
+        String err = releaseLocalSector("USER_EXIT");
+        if (err != null) {
+            Log.warn("ACO_EXIT_ACTION_FAILED reason=@", err);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean requestHandoffAction(String sectorKey) {
+        String err = requestHandoff(sectorKey);
+        if (err != null) {
+            Log.warn("ACO_TAKEOVER_ACTION_FAILED sector=@ reason=@", sectorKey, err);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean retryHandoffAction(String sectorKey) {
+        String err = retryHandoff(sectorKey);
+        if (err != null) {
+            Log.warn("ACO_RETRY_TAKEOVER_ACTION_FAILED sector=@ reason=@", sectorKey, err);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public String getStatusText() {
+        return getStatus();
+    }
+
+    @Override
+    public boolean isOnline() {
+        return isHosting() || isConnected();
+    }
+
+    @Override
+    public String getAdvertisedHost() {
+        return getHostAdvertisedAddress();
     }
 
     public synchronized void dispose() {

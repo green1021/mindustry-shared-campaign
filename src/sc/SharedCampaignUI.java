@@ -173,20 +173,34 @@ public final class SharedCampaignUI {
                 BaseDialog d = new BaseDialog("Host Campaign Settings");
                 var port1Field = new arc.scene.ui.TextField(String.valueOf(DEFAULT_SYNC_PORT));
                 var port2Field = new arc.scene.ui.TextField(String.valueOf(DEFAULT_SECTOR_PORT));
+                var hostField = new arc.scene.ui.TextField(actions.getAdvertisedHost() == null ? "" : actions.getAdvertisedHost());
                 d.cont.add("Sync Port:").pad(5f);
                 d.cont.add(port1Field).width(100f).row();
                 d.cont.add("Sector Port:").pad(5f);
                 d.cont.add(port2Field).width(100f).row();
+                d.cont.add("Advertised Host:").pad(5f);
+                d.cont.add(hostField).width(200f).row();
                 d.cont.button("Host", () -> {
                     d.hide();
                     int sync = parsePort(port1Field.getText(), DEFAULT_SYNC_PORT);
                     int sector = parsePort(port2Field.getText(), DEFAULT_SECTOR_PORT);
-                    actions.hostCampaignAction(sync, sector);
-                    Log.info("SC_HOST_INIT p1=@ p2=@", sync, sector);
+                    actions.hostCampaignAction(sync, sector, hostField.getText());
+                    Log.info("SC_HOST_INIT p1=@ p2=@ host=@", sync, sector, hostField.getText());
                 }).size(100f, 50f);
                 d.addCloseButton();
                 d.show();
             }).size(200f, 50f).pad(10f);
+
+            sectorTop.button("Claim/Enter", () -> {
+                if (selected == null) {
+                    Vars.ui.showErrorMessage("Select a sector first.");
+                    return;
+                }
+                String key = selected.preset == null ? selected.id + "" : selected.preset.name;
+                if (!actions.claimSectorAction(key)) {
+                    Vars.ui.showErrorMessage("Failed to claim sector " + key);
+                }
+            }).size(150f, 50f).pad(10f);
         }
     }
 }
