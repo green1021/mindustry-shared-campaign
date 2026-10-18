@@ -71,6 +71,12 @@ public final class AcoController implements sc.CampaignActions {
     private java.util.concurrent.ExecutorService pushExecutor;
     private volatile String lastHostChanged;
 
+    private java.util.function.BiConsumer<String, Integer> gameplayConnector;
+
+    public void setGameplayConnector(java.util.function.BiConsumer<String, Integer> connector) {
+        this.gameplayConnector = connector;
+    }
+
     public AcoController(String dataDirName) {
         this.storageDir = Paths.get(dataDirName);
     }
@@ -84,9 +90,13 @@ public final class AcoController implements sc.CampaignActions {
     public void setHostAdvertisedAddress(String address) {
         String valid = validateAdvertisedHost(address);
         this.hostAdvertisedAddress = valid;
-        if (arc.Core.settings != null && valid != null) {
+        if (arc.Core.settings != null) {
             try {
-                arc.Core.settings.put("sc-advertised-host", valid);
+                if (valid == null) {
+                    arc.Core.settings.remove("sc-advertised-host");
+                } else {
+                    arc.Core.settings.put("sc-advertised-host", valid);
+                }
             } catch (Throwable ignored) {}
         }
     }
@@ -583,7 +593,23 @@ public final class AcoController implements sc.CampaignActions {
 
     @Override
     public void connectAction(String host, int port) {
-        connectToAuthority(host, port);
+        if (connectToAuthority(host, port) && gameplayConnector != null) {
+            gameplayConnector.accept(host, port);
+        }
+    }
+
+    @Override
+    public void claimSectorAction(String sectorKey, java.util.function.Consumer<sc.ActionResult> callback) {
+        // Use pushExecutor as a single-threaded executor for action dispatch as well
+        submitPush("claim-action", () -> {
+            String err = claimLocalSector(sectorKey, 0);
+            if (err != null) {
+                Log.warn("ACO_CLAIM_ACTION_FAILED sector=@ reason=@", sectorKey, err);
+                arc.Core.app.post(() -> callback.accept(sc.ActionResult.fail(err)));
+            } else {
+                arc.Core.app.post(() -> callback.accept(sc.ActionResult.ok()));
+            }
+        });
     }
 
     @Override

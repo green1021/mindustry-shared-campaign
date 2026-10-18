@@ -38,8 +38,8 @@ public class GameSectorHostOps implements SectorHandoffManager.HostRuntimeOps {
     public boolean loadSnapshot(String sectorKey) throws Exception {
         byte[] bytes = store.readSnapshot(sectorKey);
         if (bytes == null) {
-            Log.info("HOST_LOAD_NO_SNAPSHOT_BOOTSTRAP sector=@", sectorKey);
-            return GameSectorWorld.runOnGameThread(() -> GameSectorWorld.bootstrapVanillaSector(sectorKey));
+            Log.err("HOST_LOAD_NO_COMMITTED_SNAPSHOT sector=@", sectorKey);
+            return false;
         }
         Files.createDirectories(scratchDir);
         Path tmp = Files.createTempFile(scratchDir, "hostload-", ".msav");
@@ -60,11 +60,12 @@ public class GameSectorHostOps implements SectorHandoffManager.HostRuntimeOps {
         });
         if (!started) return null;
         String host = advertisedHostSupplier == null ? null : advertisedHostSupplier.get();
-        if (host == null || host.isBlank()) {
-            host = "127.0.0.1";
-            Log.warn("HOST_ENDPOINT_LOOPBACK sector=@ advertised=127.0.0.1 status=LOCAL_ONLY " +
+        if (host == null || host.isBlank() || AcoController.isLoopback(host)) {
+            String fallback = (host == null || host.isBlank()) ? "127.0.0.1" : host;
+            Log.warn("HOST_ENDPOINT_LOOPBACK sector=@ advertised=@ status=LOCAL_ONLY " +
                     "(Remote peers will NOT be able to connect! Configure an advertised public/LAN IP in host settings)",
-                    sectorKey);
+                    sectorKey, fallback);
+            host = fallback;
         } else {
             Log.info("HOST_ENDPOINT_ADVERTISED sector=@ host=@ port=@", sectorKey, host, port);
         }

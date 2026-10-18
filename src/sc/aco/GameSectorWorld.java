@@ -49,7 +49,7 @@ public class GameSectorWorld implements SectorWorldOps {
     }
 
     @Override
-    public boolean loadWorld(String sectorKey) {
+    public boolean loadWorld(String sectorKey, boolean allowBootstrap) {
         byte[] bytes;
         try {
             bytes = store.readSnapshot(sectorKey);
@@ -58,9 +58,10 @@ public class GameSectorWorld implements SectorWorldOps {
             return false;
         }
         if (bytes == null) {
-            // First entry into an unlocked sector with no prior shared snapshot.
-            // Bootstrap a clean vanilla sector on the local game thread without
-            // fabricating or overwriting snapshots on disk.
+            if (!allowBootstrap) {
+                Log.warn("SECTOR_LOAD_MISSING_SNAPSHOT_REFUSED sector=@", sectorKey);
+                return false;
+            }
             Log.info("SECTOR_BOOTSTRAP_FIRST_ENTRY sector=@", sectorKey);
             return runOnGameThread(() -> bootstrapVanillaSector(sectorKey));
         }
@@ -106,11 +107,12 @@ public class GameSectorWorld implements SectorWorldOps {
     }
 
     @Override
-    public void leaveWorld() {
-        runOnGameThread(() -> {
-            if (Vars.state.isGame()) Vars.state.set(State.menu);
+    public boolean leaveWorld() {
+        Boolean res = runOnGameThread(() -> {
+            if (Vars.state != null && Vars.state.isGame()) Vars.state.set(State.menu);
             return true;
         });
+        return res != null && res;
     }
 
     // ------------------------------------------------------- shared load logic
@@ -191,7 +193,7 @@ public class GameSectorWorld implements SectorWorldOps {
      * Called on the game thread when entering an unlocked sector that has no prior snapshot.
      */
     static boolean bootstrapVanillaSector(String sectorKey) {
-        if (Vars.content == null || Vars.state == null || Vars.world == null || Vars.logic == null) {
+        if (Vars.content == null || Vars.state == null || Vars.world == null || Vars.logic == null || Vars.control == null) {
             Log.warn("SECTOR_BOOTSTRAP_ENV_INCOMPLETE sector=@", sectorKey);
             return false;
         }
@@ -201,17 +203,7 @@ public class GameSectorWorld implements SectorWorldOps {
             return false;
         }
         try {
-            if (Vars.state.isGame()) {
-                Vars.state.set(State.menu);
-            }
-            Vars.logic.reset();
-            Vars.world.loadSector(s);
-            Vars.state.rules.sector = s;
-            arc.Events.fire(new mindustry.game.EventType.RulesLoadEvent(Vars.state.rules));
-            Vars.logic.play();
-            arc.Events.fire(new mindustry.game.EventType.SectorLaunchEvent(s));
-            arc.Events.fire(mindustry.game.EventType.Trigger.newGame);
-            Vars.state.set(State.playing);
+            Vars.control.playSector(s);
             boolean ok = Vars.state.isCampaign() && sectorMatches(Vars.state.getSector(), sectorKey);
             Log.info("SECTOR_BOOTSTRAP_SUCCESS sector=@ ok=@", sectorKey, ok);
             return ok;

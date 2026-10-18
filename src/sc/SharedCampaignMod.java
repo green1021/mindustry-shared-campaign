@@ -47,6 +47,7 @@ public final class SharedCampaignMod extends Mod {
         // Bind the ACO control plane to the UI action seam so the dialogs do real
         // work instead of logging placeholders.
         ui.setActions(aco);
+        aco.setGameplayConnector(this::connectGameplay);
         inventory.init();
         sessions.init();
         network.init();

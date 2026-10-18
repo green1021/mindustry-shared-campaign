@@ -7,6 +7,7 @@ import mindustry.Vars;
 import mindustry.ui.dialogs.BaseDialog;
 import mindustry.ui.dialogs.JoinDialog;
 import mindustry.ui.dialogs.PlanetDialog;
+import sc.aco.SectorKeyResolver;
 import arc.scene.ui.Dialog;
 
 public final class SharedCampaignUI {
@@ -154,21 +155,28 @@ public final class SharedCampaignUI {
             }
         };
 
+        private boolean buttonsInjected = false;
+
         public void setActions(CampaignActions actions) {
             if (actions != null) {
                 this.actions = actions;
+                this.buttonsInjected = false; // Reset injection flag when actions change
             }
         }
 
         @Override
         public Dialog show() {
             Dialog d = super.show();
-            injectHostButton();
+            if (!buttonsInjected) {
+                injectHostButton();
+                buttonsInjected = true;
+            }
             return d;
         }
 
         private void injectHostButton() {
             sectorTop.row();
+            // Host/Connect controls
             sectorTop.button("Host Campaign", () -> {
                 BaseDialog d = new BaseDialog("Host Campaign Settings");
                 var port1Field = new arc.scene.ui.TextField(String.valueOf(DEFAULT_SYNC_PORT));
@@ -185,22 +193,51 @@ public final class SharedCampaignUI {
                     int sync = parsePort(port1Field.getText(), DEFAULT_SYNC_PORT);
                     int sector = parsePort(port2Field.getText(), DEFAULT_SECTOR_PORT);
                     actions.hostCampaignAction(sync, sector, hostField.getText());
-                    Log.info("SC_HOST_INIT p1=@ p2=@ host=@", sync, sector, hostField.getText());
                 }).size(100f, 50f);
                 d.addCloseButton();
                 d.show();
-            }).size(200f, 50f).pad(10f);
+            }).size(150f, 50f).pad(5f);
+
+            // Gameplay controls (Checkpoint/Exit/Release)
+            sectorTop.button("Checkpoint", () -> {
+                if (actions.checkpointLocalSectorAction()) {
+                    Vars.ui.showInfo("Checkpoint saved.");
+                } else {
+                    Vars.ui.showErrorMessage("Checkpoint failed.");
+                }
+            }).size(120f, 50f).pad(5f);
+
+            sectorTop.button("Exit/Release", () -> {
+                if (actions.exitLocalSectorAction()) {
+                    Vars.ui.showInfo("Exited and released sector.");
+                } else {
+                    Vars.ui.showErrorMessage("Failed to exit/release.");
+                }
+            }).size(120f, 50f).pad(5f);
+
+            sectorTop.row();
 
             sectorTop.button("Claim/Enter", () -> {
                 if (selected == null) {
                     Vars.ui.showErrorMessage("Select a sector first.");
                     return;
                 }
-                String key = selected.preset == null ? selected.id + "" : selected.preset.name;
-                if (!actions.claimSectorAction(key)) {
-                    Vars.ui.showErrorMessage("Failed to claim sector " + key);
+                String key;
+                try {
+                    key = SectorKeyResolver.keyOf(selected);
+                } catch (IllegalArgumentException e) {
+                    Vars.ui.showErrorMessage("Cannot identify the selected sector.");
+                    return;
                 }
-            }).size(150f, 50f).pad(10f);
+                
+                Vars.ui.loadfrag.show("Claiming sector...");
+                actions.claimSectorAction(key, res -> {
+                    Vars.ui.loadfrag.hide();
+                    if (!res.success()) {
+                        Vars.ui.showErrorMessage("Failed to claim sector " + key + ": " + res.reason());
+                    }
+                });
+            }).size(150f, 50f).pad(5f);
         }
     }
 }

@@ -373,7 +373,7 @@ public class AcoVerticalSliceTest {
         }
 
         @Override
-        public synchronized boolean loadWorld(String sectorKey) {
+        public synchronized boolean loadWorld(String sectorKey, boolean allowBootstrap) {
             loads.merge(sectorKey, 1, Integer::sum);
             return true;
         }
@@ -397,8 +397,9 @@ public class AcoVerticalSliceTest {
         }
 
         @Override
-        public synchronized void leaveWorld() {
+        public synchronized boolean leaveWorld() {
             lefts++;
+            return true;
         }
     }
 

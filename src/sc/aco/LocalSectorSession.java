@@ -95,7 +95,7 @@ public final class LocalSectorSession {
         this.grant = f[4];
         this.leftWorld = false;
 
-        if (!world.loadWorld(key)) {
+        if (!world.loadWorld(key, true)) {
             // Lease granted but the world could not run here: release it so the
             // sector is not stuck owned by a client that cannot simulate it.
             releaseBestEffort();
@@ -151,12 +151,34 @@ public final class LocalSectorSession {
     /** Release an ACTIVE lease after leaving the local world. */
     public synchronized String release(String reason) {
         if (phase != Phase.ACTIVE) return "NOT_ACTIVE";
-        String err = releaseInternal();
-        if (err == null) {
-            world.leaveWorld();
-            reset();
+
+        // 1. Checkpoint first: ensures authority has our latest state
+        String chkErr = checkpointInternal();
+        if (chkErr != null) {
+            Log.warn("LOCAL_RELEASE_CHECKPOINT_FAILED sector=@ reason=@", sectorKey, chkErr);
+            return "CHECKPOINT_FAILED:" + chkErr;
         }
-        return err;
+
+        // 2. Stop local gameplay and confirm it left active gameplay
+        if (!world.leaveWorld()) {
+            Log.warn("LOCAL_RELEASE_LEAVE_FAILED sector=@", sectorKey);
+            return "LEAVE_FAILED";
+        }
+        leftWorld = true;
+
+        // 3. Only after leaving is confirmed, send lease-release request
+        String relErr = releaseInternal();
+        if (relErr == null) {
+            Log.info("LOCAL_RELEASE_COMPLETE sector=@", sectorKey);
+            reset();
+            return null;
+        }
+
+        // 4. If release fails after world is already stopped, retain retryable state
+        phase = Phase.ERROR;
+        lastError = "RELEASE_FAILED:" + relErr;
+        Log.warn("LOCAL_RELEASE_NETWORK_FAILED sector=@ reason=@", sectorKey, relErr);
+        return lastError;
     }
 
     /**
@@ -230,7 +252,12 @@ public final class LocalSectorSession {
             return "TRANSFER_FAILED";
         }
         // Snapshot is safely committed; only now stop simulating.
-        world.leaveWorld();
+        if (!world.leaveWorld()) {
+            phase = Phase.ACTIVE; // Resume active play if we couldn't leave
+            link.send(AcoMessageType.SECTOR_HANDOFF_ABORT, key + "|ABORT|LEAVE_FAILED");
+            Log.warn("LOCAL_HANDOFF_LEAVE_FAILED sector=@", key);
+            return "LEAVE_FAILED";
+        }
         leftWorld = true;
         lastCommittedRevision = rev;
 

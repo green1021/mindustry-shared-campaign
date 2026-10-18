@@ -20,8 +20,18 @@ public interface CampaignActions {
     void connectAction(String host, int port);
 
     /** Claim lease on the selected sector and enter/load local gameplay. */
+    default void claimSectorAction(String sectorKey, java.util.function.Consumer<ActionResult> callback) {
+        callback.accept(claimSectorAction(sectorKey) ? ActionResult.ok() : ActionResult.fail("Failed to claim"));
+    }
+
+    /** Claim lease on the selected sector and enter/load local gameplay. */
     default boolean claimSectorAction(String sectorKey) {
         return false;
+    }
+
+    /** Enter a sector locally (equivalent to claim & load). */
+    default void enterLocalSectorAction(String sectorKey, java.util.function.Consumer<ActionResult> callback) {
+        callback.accept(enterLocalSectorAction(sectorKey) ? ActionResult.ok() : ActionResult.fail("Failed to enter"));
     }
 
     /** Enter a sector locally (equivalent to claim & load). */

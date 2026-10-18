@@ -11,7 +11,7 @@ package sc.aco;
 public interface SectorWorldOps {
 
     /** Load the stored snapshot for the sector as the process's single active world. */
-    boolean loadWorld(String sectorKey);
+    boolean loadWorld(String sectorKey, boolean allowBootstrap);
 
     /**
      * Save the currently running sector world as a full validated snapshot at
@@ -20,5 +20,5 @@ public interface SectorWorldOps {
     boolean saveWorld(String sectorKey, long revision);
 
     /** Leave the local world (back to the planet/menu); the sector is no longer simulated here. */
-    void leaveWorld();
+    boolean leaveWorld();
 }
