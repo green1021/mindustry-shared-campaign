@@ -113,7 +113,6 @@ public class AcoResourceAuthorizationTest {
             dirB = Files.createTempDirectory("aco-authz-b-");
 
             host = new AcoController(hostDir.toString());
-            host.setSectorRuntime(new StubRuntime());
             if (!host.hostCampaign(syncPort, syncPort + 1)) {
                 throw new IllegalStateException("hostCampaign returned false");
             }
@@ -226,7 +225,7 @@ public class AcoResourceAuthorizationTest {
 
     private static void testHostBoundAuthorized() throws Exception {
         try (Fixture f = new Fixture()) {
-            String claim = f.clientA.requestClaim("groundZero", "sess-A", "dev-A", 7);
+            String claim = f.clientA.requestClaim("groundZero", 7);
             assert claim != null : "claim must get a response";
             assert claim.contains("|OK|") : "claim should succeed, got " + claim;
 
@@ -257,11 +256,11 @@ public class AcoResourceAuthorizationTest {
 
     private static void testFailedClaimDoesNotBind() throws Exception {
         try (Fixture f = new Fixture()) {
-            String first = f.clientA.requestClaim("groundZero", "sess-A", "dev-A", 1);
+            String first = f.clientA.requestClaim("groundZero", 1);
             assert first != null && first.contains("OK") : "first claim should succeed, got " + first;
 
             // B's claim on the held sector fails; the failed claim must not bind B.
-            String second = f.clientB.requestClaim("groundZero", "sess-B", "dev-B", 1);
+            String second = f.clientB.requestClaim("groundZero", 1);
             assert second != null && second.contains("FAIL") : "claim on a held sector must fail, got " + second;
 
             String blocked = f.clientB.requestResource("op-b2", "groundZero", 0, "copper", 5,

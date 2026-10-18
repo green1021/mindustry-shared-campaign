@@ -20,7 +20,7 @@ public class SectorRegistryConcurrencyTest {
             executor.submit(() -> {
                 try {
                     latch.await();
-                    if (registry.claimSector(sectorKey, sessionId, 1)) {
+                    if (registry.claimSector(sectorKey, sessionId, 1) != null) {
                         successCount.incrementAndGet();
                     }
                 } catch (InterruptedException e) {

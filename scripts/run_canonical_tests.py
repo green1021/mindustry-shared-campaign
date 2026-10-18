@@ -86,14 +86,34 @@ CANONICAL = [
         'requires_assertions': True,
     },
     {
-        # M2 vertical slice: claim -> join -> release over real TCP with a stub
-        # game runtime. The production runtime's two halves are covered separately
-        # by SectorLoadTest (world load) and P2ServerBindTest (real P2 socket);
-        # a real desktop client joining stays ENVIRONMENT-BLOCKED on a headless host.
+        # MVP vertical slice: claim -> checkpoint -> handoff (failed save, host
+        # load failure, retry) -> completion sync, over real TCP between three
+        # real control-plane endpoints (one authority + two clients) in one JVM,
+        # with stub SectorWorldOps/HostRuntimeOps in place of the game runtime.
+        # NOT evidence of a real sector running on a client machine; the game
+        # halves stay covered separately by SectorLoadTest and P2ServerBindTest.
         'name': 'AcoVerticalSliceTest',
         'main': 'tests.AcoVerticalSliceTest',
         'sources': ['tests/AcoVerticalSliceTest.java'],
-        'expected': 6,
+        'expected': 10,
+        'requires_assertions': True,
+    },
+    {
+        # Durable lease journal: exact field round-trip, key-sorted atomic
+        # rewrite, fail-closed load on a corrupt line, archiveCorrupt recovery.
+        'name': 'SectorLeaseJournalTest',
+        'main': 'tests.SectorLeaseJournalTest',
+        'sources': ['tests/SectorLeaseJournalTest.java'],
+        'expected': 4,
+        'requires_assertions': True,
+    },
+    {
+        # Canonical sector snapshot store: exact-byte commits, checksum/revision
+        # refusal, lease markers, latest-only pruning.
+        'name': 'CampaignSectorStoreTest',
+        'main': 'tests.CampaignSectorStoreTest',
+        'sources': ['tests/CampaignSectorStoreTest.java'],
+        'expected': 7,
         'requires_assertions': True,
     },
     {

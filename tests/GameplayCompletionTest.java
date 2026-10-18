@@ -162,7 +162,6 @@ public class GameplayCompletionTest {
         hostDir = Files.createTempDirectory("aco-gameplay-host-");
 
         host = new AcoController(hostDir.toString());
-        host.setSectorRuntime(new StubRuntime());
         if (!host.hostCampaign(syncPort, syncPort + 1)) {
             throw new IllegalStateException("hostCampaign returned false");
         }

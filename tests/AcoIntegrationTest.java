@@ -59,7 +59,7 @@ public class AcoIntegrationTest {
         AcoP2Manager mockP2 = new AcoP2Manager();
         AcoMigrationManager migrationManager = new AcoMigrationManager(mockP2, null);
         
-        AcoServer server = new AcoServer(testPort, migrationManager, authority, registry, globalState, txManager);
+        AcoServer server = new AcoServer(testPort, authority, registry, globalState, txManager);
         server.start();
         Thread.sleep(150); // Wait for server socket bind
         

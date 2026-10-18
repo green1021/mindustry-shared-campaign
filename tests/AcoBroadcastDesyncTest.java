@@ -45,7 +45,7 @@ public class AcoBroadcastDesyncTest {
 
         run("RequestAfterBroadcastIsNotDesynced", AcoBroadcastDesyncTest::testRequestAfterBroadcast);
         run("CompletionRequestNeverYieldsStateSync", AcoBroadcastDesyncTest::testNeverYieldsStateSync);
-        run("SkippedBroadcastFramesAreCounted", AcoBroadcastDesyncTest::testSkippedCounted);
+        run("InterleavedBroadcastsStayCorrelated", AcoBroadcastDesyncTest::testInterleavedBroadcastsStayCorrelated);
         run("RepeatedRequestsStayAligned", AcoBroadcastDesyncTest::testRepeatedRequestsStayAligned);
 
         System.out.println("\n=== SUMMARY ===");
@@ -107,7 +107,6 @@ public class AcoBroadcastDesyncTest {
             clientDir = Files.createTempDirectory("aco-desync-client-");
 
             host = new AcoController(hostDir.toString());
-            host.setSectorRuntime(new StubRuntime());
             if (!host.hostCampaign(syncPort, syncPort + 1)) {
                 throw new IllegalStateException("hostCampaign returned false");
             }
@@ -130,8 +129,13 @@ public class AcoBroadcastDesyncTest {
 
     /** Transaction ids are opaque strings here; uniqueness makes retries visible. */
     private static String credit(Pair p, String opId, long amount) {
+        return credit(p, opId, 0, amount);
+    }
+
+    /** Same, with the caller's expected global revision for chained requests. */
+    private static String credit(Pair p, String opId, long expectedRevision, long amount) {
         // No session identity: the server binds it from the connection.
-        return p.client.requestResource(opId, "groundZero", 0, "copper", amount,
+        return p.client.requestResource(opId, "groundZero", expectedRevision, "copper", amount,
             GlobalResourceRequest.OperationType.CREDIT);
     }
 
@@ -161,15 +165,32 @@ public class AcoBroadcastDesyncTest {
         }
     }
 
-    private static void testSkippedCounted() throws Exception {
+    /**
+     * Regression for broadcast/response interleaving: a state-changing request
+     * emits an unsolicited GLOBAL_STATE_SYNC to the same socket, and the next
+     * request must still receive exactly its own response, in order, with the
+     * client's shared view caught up. (Replaces the old skipped-frame counter
+     * test: the framed transport no longer has a "skipped frame" concept; the
+     * observable invariant is strict one-to-one correlation.)
+     */
+    private static void testInterleavedBroadcastsStayCorrelated() throws Exception {
         try (Pair p = new Pair()) {
-            assert p.client.getSkippedSyncFrames() == 0 : "no broadcasts should be skipped before any request";
+            String r1 = credit(p, "op-1", 100);
+            assert r1 != null : "resource request must get a response";
+            assert r1.startsWith("op-1|true|") : "resource request should succeed, got " + r1;
+            long revision = Long.parseLong(r1.split("\\|", -1)[3]);
 
-            credit(p, "op-1", 100);
             String r2 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-2");
-            assert r2 != null : "second request must get a response";
-            assert p.client.getSkippedSyncFrames() >= 1
-                : "a queued broadcast must have been skipped, got " + p.client.getSkippedSyncFrames();
+            assert r2 != null : "completion request must get a response";
+            assert r2.equals("LOCKED|FAIL|0|") : "the interleaved broadcast must not leak into the response slot: " + r2;
+
+            // Chain the revision the first credit advanced to: the campaign is at
+            // revision 1 now, and a request still claiming 0 is legitimately stale.
+            String r3 = credit(p, "op-3", revision, 50);
+            assert r3 != null : "credit after the interleaved broadcast must get a response";
+            assert r3.startsWith("op-3|true|") : "response must correlate to its own op, got " + r3;
+            assert Long.parseLong(r3.split("\\|", -1)[3]) > revision
+                : "the client view must include the credit it just made";
         }
     }
 

@@ -191,7 +191,6 @@ public class AcoClientStateSyncTest {
             producerDir = Files.createTempDirectory("aco-state-sync-producer-");
 
             host = new AcoController(hostDir.toString());
-            host.setSectorRuntime(new StubRuntime());
             if (!host.hostCampaign(syncPort, syncPort + 1)) {
                 throw new IllegalStateException("hostCampaign returned false");
             }

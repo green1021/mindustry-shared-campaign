@@ -69,7 +69,7 @@ public class MigrationProtocolTest {
         GlobalTransactionManager txManager = new GlobalTransactionManager(globalState, bank);
         CampaignAuthority authority = new CampaignAuthority(registry, persistence);
         
-        AcoServer server = new AcoServer(6569, migrationManager, authority, registry, globalState, txManager);
+        AcoServer server = new AcoServer(6569, authority, registry, globalState, txManager);
         server.start();
         Thread.sleep(200);
         

@@ -99,7 +99,6 @@ public class AcoPersistenceLocationTest {
             cwdStateExistedBefore = Files.exists(cwdState);
 
             host = new AcoController(hostDir.toString());
-            host.setSectorRuntime(new StubRuntime());
             if (!host.hostCampaign(syncPort, syncPort + 1)) {
                 throw new IllegalStateException("hostCampaign returned false");
             }
