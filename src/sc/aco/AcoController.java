@@ -33,6 +33,14 @@ public final class AcoController implements sc.CampaignActions {
 
     private boolean initialized;
     private boolean hosting;
+
+    /** True when startup recovery refused; the on-disk dataset is left untouched and write-latched. */
+    private volatile boolean recoveryRefused;
+
+    /** True when a refused recovery left the dataset unusable until an operator repairs it. */
+    public boolean isRecoveryRefused() {
+        return recoveryRefused;
+    }
     private int syncPort;
     private int sectorPort;
 
@@ -81,6 +89,12 @@ public final class AcoController implements sc.CampaignActions {
 
         try {
             this.globalState = persistence.recover();
+        } catch (CampaignPersistence.RecoveryException e) {
+            // Fail closed: potentially committed data is on disk and has NOT been
+            // rewritten. The persistence layer refuses save()/appendWAL(), so a
+            // state that may omit a committed record can never be persisted.
+            this.recoveryRefused = true;
+            Log.err("ACO_STATE_RECOVERY_REFUSED: " + e.getMessage());
         } catch (Exception e) {
             Log.err("ACO_STATE_RECOVERY_FAILED", e);
         }
@@ -89,7 +103,7 @@ public final class AcoController implements sc.CampaignActions {
         // or the authority would reject the very first completion as LOCKED. Only a
         // campaign that has never recorded anything gets the seed, so this can never
         // re-grant progression after recovery.
-        if (globalState.unlockedSectors.isEmpty() && globalState.completedSectors.isEmpty()) {
+        if (!recoveryRefused && globalState.unlockedSectors.isEmpty() && globalState.completedSectors.isEmpty()) {
             globalState.unlockStartingSectors();
         }
 

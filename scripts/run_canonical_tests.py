@@ -172,6 +172,13 @@ CANONICAL = [
         'requires_assertions': True,
     },
     {
+        'name': 'WalCorruptionRecoveryTest',
+        'main': 'tests.WalCorruptionRecoveryTest',
+        'sources': ['tests/WalCorruptionRecoveryTest.java'],
+        'expected': 6,
+        'requires_assertions': True,
+    },
+    {
         # Server-side identity & authorization: requests are bound to the
         # server-generated connection identity; forged, unauthorized, malformed
         # and legacy payloads are rejected explicitly.

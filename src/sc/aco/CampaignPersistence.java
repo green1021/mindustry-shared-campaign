@@ -3,6 +3,7 @@ package sc.aco;
 import arc.util.Log;
 import java.io.*;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,6 +12,44 @@ public class CampaignPersistence {
     private final Path stateFile;
     private final Path logFile;
     public Path getStateFile() { return stateFile; }
+
+    /** The kind of refusal that engaged the write-refusing recovery latch. */
+    public enum RecoveryRefusal {
+        /** A terminated WAL record failed strict parsing: possible in-place corruption of a committed record. */
+        WAL_CORRUPTION,
+        /** An unterminated partial tail could not be preserved and the WAL could not be truncated. */
+        WAL_TAIL_UNREPAIRABLE,
+        /** campaign.json exists and is non-empty but fails strict parsing; refusing to start from a blank state. */
+        SNAPSHOT_CORRUPTION
+    }
+
+    /**
+     * Thrown when recovery refuses to proceed because continuing could silently
+     * discard or overwrite potentially committed data. Files on disk are left
+     * untouched, and the instance latches into a write-refusing state so a caller
+     * that ignores this failure cannot save()/appendWAL() over recoverable data.
+     * A later clean {@link #recover()} clears the latch.
+     */
+    public static class RecoveryException extends IOException {
+        public final RecoveryRefusal kind;
+        /** 1-based WAL record number the refusal refers to, or -1 when not applicable. */
+        public final long lineNumber;
+
+        public RecoveryException(RecoveryRefusal kind, long lineNumber, String message) {
+            super(message);
+            this.kind = kind;
+            this.lineNumber = lineNumber;
+        }
+    }
+
+    /** Non-null while this instance refuses all writes after a refused recovery. */
+    private RecoveryException refusal;
+
+    /** True while this instance refuses save()/appendWAL() after a refused recovery. */
+    public boolean isRecoveryRefused() {
+        return refusal != null;
+    }
+
 
     public CampaignPersistence(Path root) {
         this.stateFile = root.resolve("campaign.json");
@@ -23,6 +62,10 @@ public class CampaignPersistence {
     }
 
     public void save(GlobalCampaignState state) throws IOException {
+        if (refusal != null) {
+            throw new RecoveryException(refusal.kind, refusal.lineNumber,
+                "write refused until a clean recovery: " + refusal.getMessage());
+        }
         Path tmp = stateFile.resolveSibling("campaign.json.tmp");
         try {
             String json = toJson(state);
@@ -44,6 +87,10 @@ public class CampaignPersistence {
     }
 
     public void appendWAL(TransactionLogEntry entry) throws IOException {
+        if (refusal != null) {
+            throw new RecoveryException(refusal.kind, refusal.lineNumber,
+                "write refused until a clean recovery: " + refusal.getMessage());
+        }
         String line = entry.toJson();
         Files.write(logFile, (line + "\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         
@@ -58,38 +105,101 @@ public class CampaignPersistence {
         }
         
         String json = Files.readString(stateFile);
+        // A zero-length snapshot holds no recoverable data (the atomic rename in
+        // save() can never produce one); treat it as absent before the gate below.
         if (json.trim().isEmpty()) return Optional.empty();
-        
+        if (!isPlausibleSnapshot(json)) {
+            refusal = new RecoveryException(RecoveryRefusal.SNAPSHOT_CORRUPTION, -1,
+                "campaign.json is present (" + json.length() + " chars) but is not a plausible snapshot document");
+            Log.err("ACO recovery refused: " + refusal.getMessage());
+            throw refusal;
+        }
         try {
             GlobalCampaignState state = fromJson(json);
             return Optional.of(state);
         } catch (Exception e) {
-            Log.err("Failed to parse campaign.json", e);
-            return Optional.empty();
+            // The snapshot exists and is non-empty: it may be recoverable, and a
+            // later save() would overwrite it. Fail closed instead of silently
+            // starting from a blank state, which would permanently lose every
+            // committed operation the snapshot carries.
+            refusal = new RecoveryException(RecoveryRefusal.SNAPSHOT_CORRUPTION, -1,
+                "campaign.json is present (" + json.length() + " chars) but fails to parse: " + e);
+            Log.err("ACO recovery refused: " + refusal.getMessage());
+            throw refusal;
         }
     }
 
     public List<TransactionLogEntry> loadWAL() throws IOException {
+        // Fail-closed recovery policy:
+        //  - terminated + malformed -> refuse: the writer terminates every record
+        //    before its fsync returns, so this may be a committed record corrupted
+        //    in place; nothing is rewritten and no snapshot is saved.
+        //  - unterminated + malformed -> torn write (a prefix of an intended
+        //    record, never committed): preserve the bytes to a sidecar, truncate
+        //    the WAL back to its last complete record, replay the rest.
+        //  - unterminated + parseable -> a complete record whose final newline
+        //    never reached the disk: redo it, then restore the terminator.
+        // Known limitation: bytes alone cannot distinguish an in-place-corrupted
+        // record that also lost its terminator from a torn write; such bytes are
+        // treated as torn and preserved to the sidecar, never silently discarded.
         List<TransactionLogEntry> entries = new ArrayList<>();
         if (!Files.exists(logFile)) return entries;
-        
-        List<String> lines = Files.readAllLines(logFile);
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-            try {
-                TransactionLogEntry entry = TransactionLogEntry.fromJson(line);
-                if (entry != null && entry.operationId != null) {
-                    entries.add(entry);
+
+        byte[] raw = Files.readAllBytes(logFile);
+        int pos = 0;      // byte offset of the current record
+        int record = 0;   // 1-based record number for diagnostics
+        while (pos < raw.length) {
+            int nl = indexOfNewline(raw, pos);
+            boolean terminated = nl >= 0;
+            int end = terminated ? nl : raw.length;
+            String line = new String(raw, pos, end - pos, StandardCharsets.UTF_8).trim();
+            record++;
+
+            if (!line.isEmpty()) {
+                TransactionLogEntry entry = null;
+                Exception parseError = null;
+                try {
+                    entry = TransactionLogEntry.fromJson(line);
+                    if (entry == null || entry.operationId == null) {
+                        throw new IllegalArgumentException("record reconstructed without an operationId");
+                    }
+                } catch (Exception e) {
+                    parseError = e;
                 }
-            } catch (Exception e) {
-                Log.err("Skipping malformed WAL line: " + line);
+
+                if (parseError == null) {
+                    entries.add(entry);
+                    if (!terminated) {
+                        repairMissingTerminator();
+                    }
+                } else if (terminated) {
+                    refusal = new RecoveryException(RecoveryRefusal.WAL_CORRUPTION, record,
+                        "malformed WAL record at line " + record + ": " + parseError
+                            + " :: " + abbreviate(line));
+                    Log.err("ACO recovery refused: " + refusal.getMessage());
+                    throw refusal;
+                } else {
+                    preserveAndTruncateTornTail(raw, pos);
+                }
+            } else if (!terminated) {
+                // A whitespace-only unterminated tail is the same partial-write
+                // situation: preserve and truncate.
+                preserveAndTruncateTornTail(raw, pos);
             }
+
+            if (!terminated) break;
+            pos = nl + 1;
         }
         return entries;
     }
 
     public GlobalCampaignState recover() throws IOException {
+        // A clean recovery is the sanctioned re-evaluation point: clear any latch
+        // from a previous refused attempt. If this attempt also refuses, the latch
+        // is re-engaged before anything on disk is touched and the save() below is
+        // never reached, so a snapshot is never written from a state that silently
+        // omits a possibly committed record.
+        refusal = null;
         GlobalCampaignState state = loadState().orElseGet(() -> {
             GlobalCampaignState s = new GlobalCampaignState();
             s.campaignId = "default";
@@ -132,9 +242,97 @@ public class CampaignPersistence {
             }
         }
 
-        // Save reconciled state back to snapshot
+        // Save reconciled state back to the snapshot. Reached only after the WAL
+        // scanned clean, or after an uncommitted torn tail was preserved and
+        // dropped; any refusal throws above and never overwrites the snapshot.
         save(state);
         return state;
+    }
+
+    private static int indexOfNewline(byte[] data, int from) {
+        for (int i = from; i < data.length; i++) {
+            if (data[i] == '\n') return i;
+        }
+        return -1;
+    }
+
+    /** Root fields any legitimate snapshot must contain at least one of. */
+    private static final String[] KNOWN_SNAPSHOT_FIELDS = {
+        "campaignId", "globalRevision", "unlockedSectors", "completedSectors",
+        "techTree", "globalBank", "processedOperations"
+    };
+
+    /**
+     * Gate against the lenient snapshot reader: fromJson() tolerates arbitrary
+     * text by treating it as a mostly empty document, so structurally invalid
+     * content would otherwise be silently replaced by a blank state that a later
+     * save() persists over recoverable data. Accept only a brace-balanced JSON
+     * object naming at least one known root field.
+     */
+    private static boolean isPlausibleSnapshot(String json) {
+        if (json == null) return false;
+        String t = json.trim();
+        if (t.length() < 2 || t.charAt(0) != '{' || t.charAt(t.length() - 1) != '}') return false;
+        int depth = 0;
+        boolean inQuote = false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '"' && (i == 0 || t.charAt(i - 1) != '\\')) {
+                inQuote = !inQuote;
+                continue;
+            }
+            if (inQuote) continue;
+            if (c == '{' || c == '[') depth++;
+            else if (c == '}' || c == ']') {
+                depth--;
+                if (depth < 0) return false;
+            }
+        }
+        if (depth != 0 || inQuote) return false;
+        for (String field : KNOWN_SNAPSHOT_FIELDS) {
+            if (t.contains("\"" + field + "\"")) return true;
+        }
+        return false;
+    }
+
+    private static String abbreviate(String s) {
+        return s.length() <= 120 ? s : s.substring(0, 120) + "...(truncated)";
+    }
+
+    /** Restore a missing record terminator so future appends cannot concatenate onto the last record. */
+    private void repairMissingTerminator() throws IOException {
+        try (FileChannel ch = FileChannel.open(logFile, StandardOpenOption.WRITE)) {
+            ch.position(ch.size());
+            ch.write(java.nio.ByteBuffer.wrap(new byte[] {'\n'}));
+            ch.force(true);
+        }
+        Log.err("WAL final record was missing its terminator (incomplete fsync); terminator restored");
+    }
+
+    /**
+     * Non-destructive repair for an unterminated torn tail: preserve the exact
+     * bytes to a sidecar file first, then truncate the WAL back to its last
+     * complete record. If either step fails, nothing is truncated and recovery
+     * refuses instead.
+     */
+    private void preserveAndTruncateTornTail(byte[] raw, int tailStart) throws IOException {
+        byte[] tail = Arrays.copyOfRange(raw, tailStart, raw.length);
+        Path sidecar = logFile.resolveSibling(
+            logFile.getFileName().toString() + ".torn-tail-" + System.currentTimeMillis());
+        try {
+            Files.write(sidecar, tail);
+            try (FileChannel ch = FileChannel.open(logFile, StandardOpenOption.WRITE)) {
+                ch.truncate(tailStart);
+                ch.force(true);
+            }
+        } catch (IOException e) {
+            refusal = new RecoveryException(RecoveryRefusal.WAL_TAIL_UNREPAIRABLE, -1,
+                "torn WAL tail could not be preserved and truncated: " + e);
+            Log.err("ACO recovery refused: " + refusal.getMessage());
+            throw refusal;
+        }
+        Log.err("WAL torn tail (" + tail.length + " bytes, never committed) preserved as "
+            + sidecar.getFileName() + "; WAL truncated to its last complete record");
     }
 
     public void clearWAL() throws IOException {
