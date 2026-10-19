@@ -401,8 +401,11 @@ For each step: timestamped screenshots of the status line, `logs/latest.log` fro
 - **Commits on the branch:**
   - `cf3850a` — fix(handoff): fence stale loads, unblock the UI thread, recover from stuck loads
   - `04d0508` — test(handoff): cover stuck loads, stale parking and stale endpoints
-  - this commit — docs(audit): measured audit report
+  - `d40c6ae` — docs(audit): replace the stub with a measured audit report
+  - a final docs commit records this PR link (`git log fix/reliable-sector-handoff-2026-10` is authoritative)
 - **`main` was not rewritten.** No force-push, no `reset --hard`, no worktree clean, no untracked deletion was used at any point; the 13 modified files that existed at the start of the pass are all present in these commits (checked with `git status --porcelain` before staging).
+- **Pull request:** [#1](https://github.com/green1021/mindustry-shared-campaign/pull/1) (base `main`, not merged).
+- **Remote check:** `origin/fix/reliable-sector-handoff-2026-10` == local `HEAD`, and `origin/main` remained `6dab8d5…`; blob hashes of the three largest files in the remote commit match the working tree.
 - **Merge:** not performed and not requested.
 - **Verification at commit time:** `python3 scripts/build.py` exit 0, jar `63204f99a625d8542885cb26b75eb291398d98e975af17bb0f43e9249438d2b2` (208,804 bytes) reproduced byte-for-byte on a second build; `python3 scripts/run_canonical_tests.py` exit 0 with 21 entry points / 113 assertions / 0 failures; `git diff --check` exit 0.
 - **What is still not verified:** the two-machine graphical multiplayer run in §13. It is BLOCKED in this environment and this branch does not claim otherwise.
