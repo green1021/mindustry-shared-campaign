@@ -3,6 +3,7 @@ package sc.aco;
 import arc.files.Fi;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -261,6 +262,14 @@ public final class CampaignSectorStore {
     // ------------------------------------------------------------------- lease
 
     /** Durable local-writer lease record (capability grant). Not a transfer. */
+    /**
+     * Install a lease record atomically (temp + fsync + rename + directory fsync).
+     * A plain truncate-and-write exposes a window where a crash leaves an empty or
+     * half-written lease: the journal still knows the sector is owned, but the
+     * per-sector view would say "free" and a claim could be answered from the
+     * wrong source. The lease is a derived cache, yet it must never contradict the
+     * journal even for one read.
+     */
     public synchronized void writeLease(String sectorKey, String grant) throws IOException {
         requireKey(sectorKey);
         Path dir = sectorDir(sectorKey);
@@ -268,7 +277,26 @@ public final class CampaignSectorStore {
         noLinks(dir);
         Path f = dir.resolve("lease");
         noLinks(f);
-        Files.writeString(f, grant, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        Path temp = Files.createTempFile(dir, "lease-", ".tmp");
+        try {
+            try (FileChannel c = FileChannel.open(temp, StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                c.write(StandardCharsets.UTF_8.encode(grant == null ? "" : grant));
+                c.force(true);
+            }
+            Files.move(temp, f, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            syncDir(dir);
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    private static void syncDir(Path dir) {
+        try (FileChannel fc = FileChannel.open(dir, StandardOpenOption.READ)) {
+            fc.force(true);
+        } catch (IOException e) {
+            // Not supported on every filesystem; the rename is still atomic.
+        }
     }
 
     public synchronized String readLease(String sectorKey) {

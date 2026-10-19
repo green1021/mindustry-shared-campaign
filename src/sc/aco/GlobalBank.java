@@ -35,6 +35,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * change state, so they are simply re-evaluated after a restart.
  */
 public class GlobalBank {
+    /**
+     * Ceiling on distinct resource keys in the bank table. The table is persisted in
+     * the campaign snapshot and shipped in every state sync, so an unbounded key set
+     * is both a disk-growth and a frame-size problem: a client that credits one new
+     * (valid, harmless-looking) item name per request would grow it forever.
+     */
+    public static final int MAX_BANK_ITEMS = 256;
+    /** Content-name shape for a resource key; bounded before it reaches any map. */
+    private static final java.util.regex.Pattern RESOURCE_NAME =
+        java.util.regex.Pattern.compile("[A-Za-z0-9_.:-]{1,64}");
+
     private final GlobalCampaignState state;
     private final CampaignPersistence persistence;
     private final AtomicLong snapshotFailures = new AtomicLong();
@@ -44,7 +55,19 @@ public class GlobalBank {
         this.persistence = persistence;
     }
 
-    public synchronized TransactionResult process(GlobalResourceRequest req) {
+    /**
+     * Serialize every mutation of this campaign state on the state object itself.
+     * The bank and the authority's progression handlers (research/completion) share
+     * that monitor, so a snapshot save can never observe a half-applied promotion
+     * or a replayed operation. The lock is per campaign state, not global.
+     */
+    public TransactionResult process(GlobalResourceRequest req) {
+        synchronized (state) {
+            return processLocked(req);
+        }
+    }
+
+    private TransactionResult processLocked(GlobalResourceRequest req) {
         if (req == null) {
             return new TransactionResult("null", false, "INVALID_REQUEST", 0, 0);
         }
@@ -52,7 +75,8 @@ public class GlobalBank {
         if (req.operationId() == null || req.operationId().isBlank()
             || req.sessionId() == null || req.sessionId().isBlank()
             || req.sectorId() == null || req.sectorId().isBlank()
-            || req.resourceType() == null || req.resourceType().isBlank() || req.resourceType().contains("|")
+            || req.resourceType() == null || req.resourceType().isBlank()
+            || !RESOURCE_NAME.matcher(req.resourceType()).matches()
             || req.operationType() == null) {
             String opId = req.operationId() != null ? req.operationId() : "unknown";
             return new TransactionResult(opId, false, "INVALID_REQUEST_FIELDS",
@@ -85,10 +109,19 @@ public class GlobalBank {
                 state.globalRevision, getBalance(req.resourceType()));
         }
 
+        // New key at capacity: refuse instead of growing the persisted table. Placed
+        // after the duplicate lookup so a retry of an already-recorded operation is
+        // still answered from its entry rather than hitting this ceiling.
+        if (!state.globalBank.containsKey(req.resourceType())
+                && state.globalBank.size() >= MAX_BANK_ITEMS) {
+            return new TransactionResult(req.operationId(), false, "BANK_CAPACITY",
+                state.globalRevision, 0L);
+        }
+
         if (req.expectedGlobalRevision() != state.globalRevision) {
             TransactionResult rej = new TransactionResult(req.operationId(), false, "STALE_REVISION",
                 state.globalRevision, getBalance(req.resourceType()));
-            state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, rej));
+            state.recordProcessed(req.operationId(), new IdempotentEntry(incoming, rej));
             return rej;
         }
 
@@ -122,7 +155,7 @@ public class GlobalBank {
             success ? newBalance : current);
 
         if (!success) {
-            state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, result));
+            state.recordProcessed(req.operationId(), new IdempotentEntry(incoming, result));
             return result;
         }
 
@@ -142,7 +175,7 @@ public class GlobalBank {
         // rejection.
         state.globalBank.put(req.resourceType(), newBalance);
         state.globalRevision++;
-        state.processedOperations.put(req.operationId(), new IdempotentEntry(incoming, result));
+        state.recordProcessed(req.operationId(), new IdempotentEntry(incoming, result));
 
         // Phase 3 — snapshot checkpoint. A failure here cannot lose the committed
         // operation (the WAL holds it) and recovery reconciles, so the committed

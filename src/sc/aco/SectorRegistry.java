@@ -253,6 +253,16 @@ public class SectorRegistry {
 
     /** Park a host lease after a failed host-side load so a retry cannot be raced (RESERVED). */
     public synchronized Result reserveHostLease(String sectorKey) {
+        return reserveHostLease(sectorKey, -1);
+    }
+
+    /**
+     * Version-fenced park: only reserves the lease when it is still the exact
+     * {@code expectedOwnershipVersion} the caller took. A late attempt must not park a
+     * newer retry's lease, and the check + write happen under one monitor so there is no
+     * check-then-act window.
+     */
+    public synchronized Result reserveHostLease(String sectorKey, long expectedOwnershipVersion) {
         if (sectorKey == null) return Result.BAD_REQUEST;
         checkJournal();
         SectorOwnership prior = registry.get(sectorKey);
@@ -260,6 +270,9 @@ public class SectorRegistry {
         if (prior.state != SectorOwnership.LeaseState.ACTIVE
                 || prior.kind != SectorOwnership.OwnerKind.HOST) {
             return Result.NOT_OWNER;
+        }
+        if (expectedOwnershipVersion >= 0 && prior.ownershipVersion != expectedOwnershipVersion) {
+            return Result.STALE_VERSION;
         }
         SectorOwnership next = prior.copy();
         next.state = SectorOwnership.LeaseState.RESERVED;

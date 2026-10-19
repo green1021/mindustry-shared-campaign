@@ -45,7 +45,11 @@ public class GameSectorHostOps implements SectorHandoffManager.HostRuntimeOps {
         Path tmp = Files.createTempFile(scratchDir, "hostload-", ".msav");
         try {
             Files.write(tmp, bytes);
-            return GameSectorWorld.runOnGameThread(() -> GameSectorWorld.loadIntoGame(tmp, sectorKey));
+            // The guard fences the posted task: if this call times out, the queued
+            // load must not replace the world that a newer attempt installed.
+            GameSectorWorld.Guard guard = new GameSectorWorld.Guard();
+            return GameSectorWorld.runOnGameThread(guard,
+                    () -> GameSectorWorld.loadIntoGame(tmp, sectorKey, guard));
         } finally {
             Files.deleteIfExists(tmp);
         }
@@ -54,7 +58,9 @@ public class GameSectorHostOps implements SectorHandoffManager.HostRuntimeOps {
     @Override
     public String startServer(String sectorKey) throws Exception {
         int port = portSupplier.getAsInt();
-        boolean started = GameSectorWorld.runOnGameThread(() -> {
+        GameSectorWorld.Guard guard = new GameSectorWorld.Guard();
+        boolean started = GameSectorWorld.runOnGameThread(guard, () -> {
+            if (guard.isCancelled()) return false;
             p2.startP2(port, sectorKey);
             return p2.isActive();
         });

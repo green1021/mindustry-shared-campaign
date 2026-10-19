@@ -18,7 +18,7 @@ import java.util.List;
  * session. A client that reads exactly one frame per request consumes the queued
  * broadcast as the response to its <em>next</em> request. The first probe run
  * showed a completion request being handed the campaign JSON snapshot instead of
- * {@code LOCKED|FAIL|0|}.
+ * the refusal for the sector it named.
  *
  * <p>These tests assert the response a client gets back is the response to the
  * request it actually sent, across a broadcast-generating request and the request
@@ -30,11 +30,19 @@ public class AcoBroadcastDesyncTest {
      * A sector a fresh campaign deterministically refuses. Only the starting
      * sector is granted on a new campaign (see
      * {@code GlobalCampaignState.unlockStartingSectors()}), so completing this one
-     * always answers {@code LOCKED|FAIL|0|} regardless of progression. Pinning the
-     * locked assertions here keeps this regression purely about frame alignment,
-     * independent of the unlock seed.
+     * always answers {@code <sector>|FAIL|LOCKED|<rev>|0} regardless of progression.
+     * Pinning the locked assertions here keeps this regression purely about frame
+     * alignment, independent of the unlock seed. The key is a real preset id; the
+     * old fixture used "craters", which does not exist in SectorPresets.
      */
-    private static final String LOCKED_SECTOR = "craters";
+    private static final String LOCKED_SECTOR = "crateredBattleground";
+
+    /** The refusal this campaign must produce for {@link #LOCKED_SECTOR}. */
+    private static boolean isLockedRefusal(String response) {
+        return response != null
+            && response.startsWith(LOCKED_SECTOR + "|FAIL|LOCKED|")
+            && response.endsWith("|0");
+    }
 
     private static int passed = 0;
     private static int failed = 0;
@@ -150,7 +158,7 @@ public class AcoBroadcastDesyncTest {
             String r2 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-2");
             assert r2 != null : "completion request must get a response";
             assert !r2.startsWith("{") : "completion response was the state-sync JSON: " + r2;
-            assert r2.equals("LOCKED|FAIL|0|") : "locked sector must refuse completion, got " + r2;
+            assert isLockedRefusal(r2) : "locked sector must refuse completion, got " + r2;
         }
     }
 
@@ -182,7 +190,7 @@ public class AcoBroadcastDesyncTest {
 
             String r2 = p.client.requestSectorCompletion(LOCKED_SECTOR, "op-2");
             assert r2 != null : "completion request must get a response";
-            assert r2.equals("LOCKED|FAIL|0|") : "the interleaved broadcast must not leak into the response slot: " + r2;
+            assert isLockedRefusal(r2) : "the interleaved broadcast must not leak into the response slot: " + r2;
 
             // Chain the revision the first credit advanced to: the campaign is at
             // revision 1 now, and a request still claiming 0 is legitimately stale.
@@ -213,7 +221,7 @@ public class AcoBroadcastDesyncTest {
                 // evaluating the request.
                 String done = p.client.requestSectorCompletion(LOCKED_SECTOR, "done-" + i);
                 assert done != null : "round " + i + " completion response was null";
-                assert done.equals("LOCKED|FAIL|0|") : "round " + i + " completion response: " + done;
+                assert isLockedRefusal(done) : "round " + i + " completion response: " + done;
             }
             assert revision == 4 : "four credits should reach revision 4, got " + revision;
         }

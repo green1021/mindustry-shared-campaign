@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Callable;
 import mindustry.Vars;
@@ -80,7 +81,12 @@ public class GameSectorWorld implements SectorWorldOps {
 
     @Override
     public boolean saveWorld(String sectorKey, long revision) {
-        return runOnGameThread(() -> {
+        // The game thread only serialises the world to a temp file; the (fsync + hash +
+        // journal) commit happens on the calling thread. Committing inside the posted
+        // task would stall the simulation loop for the whole disk write and make the
+        // 60 s game-thread bound easier to hit.
+        AtomicReference<byte[]> written = new AtomicReference<>();
+        boolean ok = runOnGameThread(() -> {
             if (!Vars.state.isCampaign()) return false;
             Sector s = Vars.state.getSector();
             if (s == null || !sectorMatches(s, sectorKey)) return false;
@@ -96,14 +102,22 @@ public class GameSectorWorld implements SectorWorldOps {
                         "sc-sector", sectorKey,
                         "sc-revision", String.valueOf(revision));
                 SaveIO.write(new Fi(tmp.toFile()), options);
-                byte[] bytes = Files.readAllBytes(tmp);
-                store.commitSnapshot(sectorKey, revision, bytes, null);
-                Log.info("SECTOR_SAVE_COMMITTED sector=@ revision=@ bytes=@", sectorKey, revision, bytes.length);
+                written.set(Files.readAllBytes(tmp));
                 return true;
             } finally {
                 Files.deleteIfExists(tmp);
             }
         });
+        byte[] bytes = written.get();
+        if (!ok || bytes == null) return false;
+        try {
+            store.commitSnapshot(sectorKey, revision, bytes, null);
+        } catch (RuntimeException e) {
+            Log.err("SECTOR_SAVE_COMMIT_FAILED sector=@ revision=@ : @", sectorKey, revision, e.getMessage());
+            return false;
+        }
+        Log.info("SECTOR_SAVE_COMMITTED sector=@ revision=@ bytes=@", sectorKey, revision, bytes.length);
+        return true;
     }
 
     @Override
@@ -119,8 +133,20 @@ public class GameSectorWorld implements SectorWorldOps {
 
     /** Load a stored snapshot file into the game (game thread). Shared with host takeover. */
     static boolean loadIntoGame(Path file, String sectorKey) {
+        return loadIntoGame(file, sectorKey, null);
+    }
+
+    /**
+     * Load a stored snapshot into the game on the game thread, refusing to touch the
+     * global world once {@code guard} was cancelled.
+     *
+     * <p>Validation ({@code SaveIO.getMeta}, tag parsing, sector resolution) happens
+     * before the check because it is read-only. The destructive block
+     * ({@code logic.reset} + {@code SaveIO.load}) is fenced, so a task that timed out on
+     * the caller's side can no longer replace the world that a newer attempt installed.
+     */
+    static boolean loadIntoGame(Path file, String sectorKey, Guard guard) {
         if (Vars.content == null || Vars.state == null) return false;
-        if (Vars.state.isGame()) Vars.state.set(State.menu);
         SaveMeta meta = SaveIO.getMeta(new Fi(file.toFile()));
         if (meta == null || meta.tags == null) return false;
         String info = meta.tags.get("sc-sector-info");
@@ -129,7 +155,15 @@ public class GameSectorWorld implements SectorWorldOps {
         if (s == null || meta.rules == null || meta.rules.sector == null || !sectorMatches(meta.rules.sector, sectorKey)) {
             return false;
         }
-        s.info = JsonIO.read(SectorInfo.class, info);
+        SectorInfo parsed = JsonIO.read(SectorInfo.class, info);
+        if (parsed == null) return false;
+        // Last chance to back out: nothing below this line is reversible.
+        if (guard != null && guard.isCancelled()) {
+            Log.warn("SECTOR_LOAD_ABANDONED_SUPERSEDED sector=@", sectorKey);
+            return false;
+        }
+        if (Vars.state.isGame()) Vars.state.set(State.menu);
+        s.info = parsed;
         Vars.logic.reset();
         SaveIO.load(new Fi(file.toFile()));
         boolean ok = Vars.state.isCampaign() && sectorMatches(Vars.state.getSector(), sectorKey);
@@ -214,11 +248,40 @@ public class GameSectorWorld implements SectorWorldOps {
     }
 
     /**
+     * Gate for work that was already posted to the game thread.
+     *
+     * <p>{@code Core.app.post} has no cancellation: a task whose caller timed out still
+     * runs later, on the game thread, and would happily replace {@code Vars.world} with
+     * a snapshot from an attempt that has already been declared failed and superseded.
+     * The guard is flipped by the waiting caller on timeout, and every destructive
+     * game-thread block checks it immediately before mutating.
+     */
+    public static final class Guard {
+        private volatile boolean cancelled;
+
+        public boolean isCancelled() {
+            return cancelled;
+        }
+
+        void cancel() {
+            cancelled = true;
+        }
+    }
+
+    /**
      * Schedule engine work on the game thread and block (bounded) for its result.
      * Returns false when there is no running application to schedule onto, on
      * timeout, or when the task threw.
      */
     static boolean runOnGameThread(Callable<Boolean> op) {
+        return runOnGameThread(null, op);
+    }
+
+    /**
+     * Cancellable variant: on timeout the guard is cancelled, so the queued task becomes
+     * a no-op instead of mutating the world after the caller gave up on it.
+     */
+    static boolean runOnGameThread(Guard guard, Callable<Boolean> op) {
         if (Core.app == null) {
             Log.warn("SECTOR_WORLD_NO_APP");
             return false;
@@ -234,26 +297,37 @@ public class GameSectorWorld implements SectorWorldOps {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Boolean> result = new AtomicReference<>(false);
         AtomicReference<Throwable> error = new AtomicReference<>();
+        AtomicBoolean abandoned = new AtomicBoolean();
         Core.app.post(() -> {
             try {
+                if (guard != null && guard.isCancelled()) {
+                    Log.warn("SECTOR_WORLD_TASK_SKIPPED_CANCELLED");
+                    return;
+                }
                 result.set(op.call());
             } catch (Throwable t) {
                 error.set(t);
+                // The waiter may already be gone; never swallow the failure silently.
+                if (abandoned.get()) Log.err("SECTOR_WORLD_LATE_FAILED", t);
             } finally {
                 latch.countDown();
             }
         });
         try {
             if (!latch.await(GAME_THREAD_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                Log.warn("SECTOR_WORLD_TIMEOUT");
+                abandoned.set(true);
+                if (guard != null) guard.cancel();
+                Log.warn("SECTOR_WORLD_TIMEOUT (task fenced; it will not mutate the world if it has not started)");
                 return false;
             }
         } catch (InterruptedException e) {
+            abandoned.set(true);
+            if (guard != null) guard.cancel();
             Thread.currentThread().interrupt();
             return false;
         }
         if (error.get() != null) {
-            Log.err("SECTOR_WORLD_FAILED", error.get());
+            if (!abandoned.get()) Log.err("SECTOR_WORLD_FAILED", error.get());
             return false;
         }
         return Boolean.TRUE.equals(result.get());

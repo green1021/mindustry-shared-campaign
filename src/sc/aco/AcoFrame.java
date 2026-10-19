@@ -7,6 +7,11 @@ public record AcoFrame(byte version, byte type, int msgId, byte[] payload) {
     public static final int MAX_PAYLOAD = 65536;
 
     public byte[] encode() {
+        if (payload.length > MAX_PAYLOAD) {
+            // Without this, encode() produced a frame the peer's decode() rejects as
+            // "invalid-len", which killed the connection instead of failing the send.
+            throw new IllegalArgumentException("payload-too-large: " + payload.length + " > " + MAX_PAYLOAD);
+        }
         ByteBuffer buf = ByteBuffer.allocate(HEADER_SIZE + payload.length);
         buf.put(version);
         buf.put(type);

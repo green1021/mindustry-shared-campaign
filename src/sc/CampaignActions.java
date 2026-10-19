@@ -59,6 +59,67 @@ public interface CampaignActions {
         return false;
     }
 
+    // --- Asynchronous control-plane actions ----------------------------------
+    //
+    // The boolean methods above are dispatch-only: `true` means the request was
+    // accepted for sending, never that the handoff/checkpoint actually completed.
+    // UI code must use the callback variants below, which run the (potentially
+    // blocking) work off the game thread and invoke the callback exactly once.
+    // The defaults execute inline so headless stubs stay simple.
+
+    /** True when this process runs the campaign authority (host role). */
+    default boolean isHosting() {
+        return false;
+    }
+
+    /** Handoff phase for a sector: NONE/AWAIT_SNAPSHOT/AWAIT_RELEASE/LOADING/SERVING/FAILED/ABORTED. */
+    default String handoffPhase(String sectorKey) {
+        return "NONE";
+    }
+
+    /** Last recorded failure reason for that sector's handoff, or null. */
+    default String handoffFailure(String sectorKey) {
+        return null;
+    }
+
+    /** True when a failed handoff left the sector parked and safe to retry. */
+    default boolean isHandoffRetryable(String sectorKey) {
+        return false;
+    }
+
+    /** Host: request takeover; callback receives the dispatch result, off the game thread. */
+    default void requestHandoffAction(String sectorKey, java.util.function.Consumer<ActionResult> callback) {
+        dispatchInline("takeover", () -> requestHandoffAction(sectorKey), callback);
+    }
+
+    /** Host: retry a failed takeover; callback receives the real load result. */
+    default void retryHandoffAction(String sectorKey, java.util.function.Consumer<ActionResult> callback) {
+        dispatchInline("retry-takeover", () -> retryHandoffAction(sectorKey), callback);
+    }
+
+    /** Save a checkpoint asynchronously; callback carries the committed/failed result. */
+    default void checkpointLocalSectorAction(java.util.function.Consumer<ActionResult> callback) {
+        dispatchInline("checkpoint", () -> checkpointLocalSectorAction(), callback);
+    }
+
+    /** Save, leave the world and release the lease asynchronously. */
+    default void exitLocalSectorAction(java.util.function.Consumer<ActionResult> callback) {
+        dispatchInline("exit", () -> exitLocalSectorAction(), callback);
+    }
+
+    /** Inline fallback for headless stubs. Always terminates the callback exactly once. */
+    static void dispatchInline(String what, java.util.function.BooleanSupplier op,
+                               java.util.function.Consumer<ActionResult> callback) {
+        if (callback == null) return;
+        ActionResult result;
+        try {
+            result = op.getAsBoolean() ? ActionResult.ok() : ActionResult.fail(what + " refused");
+        } catch (RuntimeException | Error e) {
+            result = ActionResult.fail("EXCEPTION:" + e.getClass().getSimpleName());
+        }
+        callback.accept(result);
+    }
+
     /** Returns active controller status string or empty if unbound. */
     default String getStatusText() {
         return "unbound";
