@@ -220,6 +220,32 @@ CANONICAL = [
         'requires_assertions': True,
     },
     {
+        # Takeover / Retry Takeover control logic: canonical sector keys for
+        # preset and non-preset sectors, pre-dispatch guards (host role, retry
+        # only after a failed handoff), phase-to-outcome mapping (success only
+        # on SERVING), and terminal async dispatch (success/exception/rejection/
+        # no-executor) off the caller's thread.
+        'name': 'HandoffUiTest',
+        'main': 'tests.HandoffUiTest',
+        'sources': ['tests/HandoffUiTest.java'],
+        'expected': 14,
+        'requires_assertions': True,
+    },
+    {
+        # Monitor-stall regression: with a fake HostRuntimeOps blocked inside
+        # loadSnapshot, the UI-facing phase/failure/handoffId reads and the
+        # production controller API must return within 250 ms (lock-free), while
+        # retry, duplicate notifications, executor rejection, disposal and
+        # concurrent retries keep exactly one load and one server start.
+        # Lives in package sc.aco so it can use the package-private manager
+        # constructor with an injected executor.
+        'name': 'HandoffConcurrencyTest',
+        'main': 'sc.aco.HandoffConcurrencyTest',
+        'sources': ['tests/HandoffConcurrencyTest.java', 'tests/TestGuard.java'],
+        'expected': 14,
+        'requires_assertions': True,
+    },
+    {
         'name': 'SectorRegistryConcurrencyTest',
         'main': 'tests.SectorRegistryConcurrencyTest',
         'sources': ['tests/SectorRegistryConcurrencyTest.java'],
