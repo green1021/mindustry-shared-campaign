@@ -43,6 +43,17 @@ public class SectorLeaseJournal {
     public SectorLeaseJournal(Path directory) throws IOException {
         Path dir = directory.toAbsolutePath().normalize();
         noLinks(dir);
+        // The journal lives in a subdirectory of the campaign directory, and that
+        // subdirectory is created by nobody else. A missing directory used to
+        // disable lease durability for the whole first session of a fresh
+        // campaign (the open failed, the registry ran with no journal), which is
+        // exactly the window where a crash loses every claim. Create it here; if
+        // that fails the caller still gets the degraded, explicitly-logged path.
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            throw new IOException("lease-journal-directory-unusable: " + dir + ": " + e.getMessage(), e);
+        }
         if (!Files.isDirectory(dir)) throw new IOException("lease-journal-directory-missing: " + dir);
         this.file = dir.resolve("sector_leases.jsonl");
         noLinks(file);
@@ -90,6 +101,10 @@ public class SectorLeaseJournal {
             }
             noLinks(file);
             Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            // The rename is atomic, but without a directory fsync it is not durable:
+            // after a power loss the journal could name the previous owner (or none)
+            // while the authority already acknowledged the new lease.
+            syncDir(dir);
         } catch (IOException e) {
             if (temp != null) {
                 try {
@@ -171,6 +186,14 @@ public class SectorLeaseJournal {
             throw new LeaseJournalException("lease-journal-corrupt line " + lineNo + ": endpoint on non-host lease");
         }
         return o;
+    }
+
+    private static void syncDir(Path dir) {
+        try (FileChannel fc = FileChannel.open(dir, StandardOpenOption.READ)) {
+            fc.force(true);
+        } catch (IOException e) {
+            // Not supported on every filesystem; the rename itself is still atomic.
+        }
     }
 
     static void noLinks(Path p) {

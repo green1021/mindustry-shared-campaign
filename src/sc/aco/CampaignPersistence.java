@@ -9,6 +9,12 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class CampaignPersistence {
+    /**
+     * Compaction threshold: the WAL is only rewritten once it exceeds this size, so
+     * growth is bounded while small logs stay byte-identical across a recovery.
+     */
+    public static final long WAL_COMPACT_MIN_BYTES = 1L << 20;
+
     private final Path stateFile;
     private final Path logFile;
     public Path getStateFile() { return stateFile; }
@@ -61,41 +67,71 @@ public class CampaignPersistence {
         }
     }
 
+    /**
+     * Durably install a snapshot: write a uniquely named temp file, fsync it, rename
+     * it over campaign.json, then fsync the directory so the rename itself survives a
+     * power loss. Serialized per instance because two concurrent saves would
+     * otherwise race on one temp path and could install an older serialization after
+     * a newer one.
+     *
+     * <p>On Linux {@code force(true)} on a read-opened channel does issue fsync(2)
+     * (verified with strace), but that is platform behaviour the JDK documents as
+     * "no effect"; every channel here is opened for writing so the flush is
+     * guaranteed by contract rather than by accident.
+     */
     public void save(GlobalCampaignState state) throws IOException {
-        if (refusal != null) {
-            throw new RecoveryException(refusal.kind, refusal.lineNumber,
-                "write refused until a clean recovery: " + refusal.getMessage());
-        }
-        Path tmp = stateFile.resolveSibling("campaign.json.tmp");
-        try {
-            String json = toJson(state);
-            Files.writeString(tmp, json);
-            
-            try (FileChannel fc = FileChannel.open(tmp, StandardOpenOption.READ)) {
-                fc.force(true);
+        synchronized (this) {
+            if (refusal != null) {
+                throw new RecoveryException(refusal.kind, refusal.lineNumber,
+                    "write refused until a clean recovery: " + refusal.getMessage());
             }
-            
-            Files.move(tmp, stateFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            
-            try (FileChannel fc = FileChannel.open(stateFile.getParent(), StandardOpenOption.READ)) {
-                fc.force(true);
+            Path tmp = Files.createTempFile(stateFile.getParent(), "campaign-", ".json.tmp");
+            boolean installed = false;
+            try {
+                byte[] json = toJson(state).getBytes(StandardCharsets.UTF_8);
+                try (FileChannel fc = FileChannel.open(tmp, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING)) {
+                    java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(json);
+                    while (buf.hasRemaining()) fc.write(buf);
+                    fc.force(true);
+                }
+                Files.move(tmp, stateFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                syncDir(stateFile.getParent());
+                installed = true;
+            } finally {
+                // Any failure - including a RuntimeException out of toJson - must not
+                // leave a temp file behind for the next recovery to trip over.
+                if (!installed) {
+                    try {
+                        Files.deleteIfExists(tmp);
+                    } catch (IOException ignored) {
+                        // the original failure is the one worth reporting
+                    }
+                }
             }
-        } catch (IOException e) {
-            Files.deleteIfExists(tmp);
-            throw e;
         }
+        // The snapshot is durable: records it already contains are dead weight.
+        // Records above the snapshot revision (including an in-flight commit that
+        // appended before mutating) are kept, so compaction can never drop an
+        // operation the snapshot does not carry yet. Compaction is threshold-gated:
+        // rewriting a small, already-correct log on every save would add an fsync
+        // per transaction and destroy the log's short-horizon audit value.
+        maybeCompactWAL(state.globalRevision);
     }
 
     public void appendWAL(TransactionLogEntry entry) throws IOException {
-        if (refusal != null) {
-            throw new RecoveryException(refusal.kind, refusal.lineNumber,
-                "write refused until a clean recovery: " + refusal.getMessage());
-        }
-        String line = entry.toJson();
-        Files.write(logFile, (line + "\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        
-        try (FileChannel fc = FileChannel.open(logFile, StandardOpenOption.READ)) {
-            fc.force(true);
+        synchronized (this) {
+            if (refusal != null) {
+                throw new RecoveryException(refusal.kind, refusal.lineNumber,
+                    "write refused until a clean recovery: " + refusal.getMessage());
+            }
+            byte[] line = (entry.toJson() + "\n").getBytes(StandardCharsets.UTF_8);
+            try (FileChannel fc = FileChannel.open(logFile, StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE, StandardOpenOption.APPEND)) {
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(line);
+                while (buf.hasRemaining()) fc.write(buf);
+                fc.force(true);
+            }
         }
     }
 
@@ -210,8 +246,14 @@ public class CampaignPersistence {
         List<TransactionLogEntry> wal = loadWAL();
         for (TransactionLogEntry entry : wal) {
             // Idempotent WAL replay: apply ONLY if the snapshot does not already
-            // reflect the operation. A second recovery must not re-apply anything,
-            // and neither must a snapshot that already contains the entry.
+            // reflect the operation. Two independent guards are needed now that the
+            // idempotency window is bounded: the operation id (exact record) and the
+            // snapshot revision (an entry at or below the snapshot's revision was
+            // folded into it even if its id has since been evicted, because the
+            // revision is assigned under the same lock that serializes the save).
+            if (entry.globalRevision <= state.globalRevision) {
+                continue;
+            }
             if (state.processedOperations.containsKey(entry.operationId)) {
                 continue;
             }
@@ -229,7 +271,7 @@ public class CampaignPersistence {
             RequestFingerprint fp = new RequestFingerprint(
                 entry.operationId, entry.sessionId, entry.sectorId,
                 entry.expectedGlobalRevision, entry.resourceType, entry.amount, entry.operationType);
-            state.processedOperations.put(entry.operationId, new GlobalBank.IdempotentEntry(fp, res));
+            state.recordProcessed(entry.operationId, new GlobalBank.IdempotentEntry(fp, res));
 
             if (entry.success) {
                 // newBalance is the absolute post-operation balance recorded at commit
@@ -335,9 +377,102 @@ public class CampaignPersistence {
             + sidecar.getFileName() + "; WAL truncated to its last complete record");
     }
 
+    /**
+     * Drop WAL records that the durable snapshot already contains.
+     *
+     * <p>Before this existed the log was append-only for the life of a campaign:
+     * every resource transaction stayed on disk forever and every restart replayed
+     * the whole history, even though each save had already folded those records into
+     * campaign.json. Compaction is revision-based, not "truncate everything": a
+     * record is dropped only when {@code record.globalRevision <= snapshotRevision}.
+     * A concurrent commit appends its record before mutating and saves after, so an
+     * in-flight record always carries a revision above the current snapshot and is
+     * never dropped.
+     *
+     * <p>Failures are logged and leave the existing log untouched: losing the
+     * compaction opportunity is harmless (the next save retries), while truncating
+     * on a partial read would not be.
+     */
+    public synchronized void compactWAL(long snapshotRevision) {
+        if (refusal != null) return;
+        if (!Files.exists(logFile)) return;
+        try {
+            byte[] raw = Files.readAllBytes(logFile);
+            StringBuilder keep = new StringBuilder(raw.length);
+            boolean dropped = false;
+            int pos = 0;
+            while (pos < raw.length) {
+                int nl = indexOfNewline(raw, pos);
+                boolean terminated = nl >= 0;
+                int end = terminated ? nl : raw.length;
+                String trimmed = new String(raw, pos, end - pos, StandardCharsets.UTF_8).trim();
+                if (!trimmed.isEmpty()) {
+                    boolean covered = false;
+                    try {
+                        TransactionLogEntry e = TransactionLogEntry.fromJson(trimmed);
+                        covered = e != null && e.globalRevision <= snapshotRevision;
+                    } catch (RuntimeException ignored) {
+                        // Unreadable record: keep it so recovery still gets the chance
+                        // to refuse on it instead of this method silently discarding it.
+                    }
+                    if (covered) {
+                        dropped = true;
+                    } else {
+                        keep.append(trimmed);
+                        // An unterminated tail must stay unterminated; terminating it
+                        // would turn a torn write into a malformed committed record.
+                        if (terminated) keep.append('\n');
+                    }
+                }
+                pos = terminated ? nl + 1 : raw.length;
+            }
+            if (!dropped) return;
+            Path tmp = Files.createTempFile(logFile.getParent(), "transaction_log-", ".tmp");
+            try {
+                try (FileChannel fc = FileChannel.open(tmp, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING)) {
+                    java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(
+                        keep.toString().getBytes(StandardCharsets.UTF_8));
+                    while (buf.hasRemaining()) fc.write(buf);
+                    fc.force(true);
+                }
+                Files.move(tmp, logFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                syncDir(logFile.getParent());
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+            Log.info("ACO_WAL_COMPACTED upToRevision=@ bytes=@ -> @", snapshotRevision, raw.length, keep.length());
+        } catch (IOException e) {
+            Log.err("ACO_WAL_COMPACT_FAILED upToRevision=@ (log left intact)", snapshotRevision, e);
+        }
+    }
+
+    /**
+     * Compact only once the log has actually grown past {@link #WAL_COMPACT_MIN_BYTES}.
+     * Growth is bounded by that threshold plus the records of the save in flight.
+     */
+    private void maybeCompactWAL(long snapshotRevision) {
+        try {
+            if (!Files.exists(logFile) || Files.size(logFile) <= WAL_COMPACT_MIN_BYTES) return;
+        } catch (IOException e) {
+            return;
+        }
+        compactWAL(snapshotRevision);
+    }
+
+    /** Explicit full clear, kept for operators/tests; same atomic path as compaction. */
     public void clearWAL() throws IOException {
-        if (Files.exists(logFile)) {
-            Files.write(logFile, new byte[0], StandardOpenOption.TRUNCATE_EXISTING);
+        compactWAL(Long.MAX_VALUE);
+    }
+
+    /** fsync a directory so a rename inside it is durable. */
+    private static void syncDir(Path dir) {
+        try (FileChannel fc = FileChannel.open(dir, StandardOpenOption.READ)) {
+            fc.force(true);
+        } catch (IOException e) {
+            // Directory fsync is unsupported on some filesystems (e.g. Windows).
+            // The rename is still atomic; only its power-loss durability is weaker.
+            Log.warn("ACO_DIR_SYNC_FAILED dir=@ : @", dir, e.getMessage());
         }
     }
 
@@ -347,6 +482,21 @@ public class CampaignPersistence {
      * wire payload a client parses (see {@link AcoClient#handleGlobalStateSync}).
      */
     public static String toJson(GlobalCampaignState state) {
+        return toJson(state, true);
+    }
+
+    /**
+     * The wire form of a campaign sync: identical to {@link #toJson} except that
+     * the idempotency table is omitted. Clients fold the campaign view; they never
+     * replay authority-side operation ids, and with a bounded-but-large window the
+     * table would push {@code GLOBAL_STATE_SYNC} past {@link AcoFrame#MAX_PAYLOAD}
+     * and tear down every connection with an oversized frame.
+     */
+    public static String toSyncJson(GlobalCampaignState state) {
+        return toJson(state, false);
+    }
+
+    private static String toJson(GlobalCampaignState state, boolean withProcessed) {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         sb.append("\"campaignId\":\"").append(escape(state.campaignId)).append("\",");
@@ -354,7 +504,7 @@ public class CampaignPersistence {
         
         sb.append("\"unlockedSectors\":[");
         boolean first = true;
-        for (String s : state.unlockedSectors) {
+        for (String s : sorted(state.unlockedSectors)) {
             if (!first) sb.append(",");
             sb.append("\"").append(escape(s)).append("\"");
             first = false;
@@ -363,7 +513,7 @@ public class CampaignPersistence {
         
         sb.append("\"completedSectors\":[");
         first = true;
-        for (String s : state.completedSectors) {
+        for (String s : sorted(state.completedSectors)) {
             if (!first) sb.append(",");
             sb.append("\"").append(escape(s)).append("\"");
             first = false;
@@ -372,7 +522,7 @@ public class CampaignPersistence {
         
         sb.append("\"techTree\":{");
         first = true;
-        for (Map.Entry<String, Boolean> e : state.techTree.entrySet()) {
+        for (Map.Entry<String, Boolean> e : new java.util.TreeMap<>(state.techTree).entrySet()) {
             if (!first) sb.append(",");
             sb.append("\"").append(escape(e.getKey())).append("\":").append(e.getValue());
             first = false;
@@ -381,29 +531,38 @@ public class CampaignPersistence {
         
         sb.append("\"globalBank\":{");
         first = true;
-        for (Map.Entry<String, Long> e : state.globalBank.entrySet()) {
+        for (Map.Entry<String, Long> e : new java.util.TreeMap<>(state.globalBank).entrySet()) {
             if (!first) sb.append(",");
             sb.append("\"").append(escape(e.getKey())).append("\":").append(e.getValue());
             first = false;
         }
         sb.append("},");
         
+        if (!withProcessed) {
+            // Drop the separator left by the previous field, then close the object.
+            if (sb.charAt(sb.length() - 1) == ',') sb.setLength(sb.length() - 1);
+            sb.append("}");
+            return sb.toString();
+        }
         sb.append("\"processedOperations\":{");
         first = true;
-        for (Map.Entry<String, Object> e : state.processedOperations.entrySet()) {
+        // Window order, not hash order: the table has to be reproducible and its
+        // oldest entries have to be identifiable after a reload.
+        for (String opKey : orderedProcessedKeys(state)) {
+            Object value = state.processedOperations.get(opKey);
             if (!first) sb.append(",");
-            sb.append("\"").append(escape(e.getKey())).append("\":");
-            if (e.getValue() instanceof GlobalBank.IdempotentEntry entry) {
+            sb.append("\"").append(escape(opKey)).append("\":");
+            if (value instanceof GlobalBank.IdempotentEntry entry) {
                 // Full idempotency record: the payload fingerprint plus the result it
                 // serves. Both must survive the snapshot, or a restart would forget
                 // what the operation was and could not verify retries.
                 sb.append("{\"fingerprint\":").append(entry.fingerprint().toJson());
                 sb.append(",\"result\":").append(entry.result().toJson()).append("}");
-            } else if (e.getValue() instanceof TransactionResult res) {
+            } else if (value instanceof TransactionResult res) {
                 // Legacy bare result (pre-fingerprint snapshot): preserved verbatim so
                 // recovery can keep it explicitly fingerprint-less.
                 sb.append(res.toJson());
-            } else if (e.getValue() instanceof Boolean b) {
+            } else if (value instanceof Boolean b) {
                 sb.append(b.booleanValue());
             } else {
                 // Legacy marker or unknown value: persisted as null and restored as the
@@ -457,11 +616,36 @@ public class CampaignPersistence {
         String rawOps = extractRawObjectField(json, "processedOperations");
         if (rawOps != null) {
             for (Map.Entry<String, String> e : splitRawValues(rawOps).entrySet()) {
-                state.processedOperations.put(e.getKey(), parseProcessedOperation(e.getKey(), e.getValue()));
+                state.recordProcessed(e.getKey(), parseProcessedOperation(e.getKey(), e.getValue()));
             }
         }
 
         return state;
+    }
+
+    private static java.util.List<String> sorted(java.util.Collection<String> in) {
+        java.util.List<String> out = new java.util.ArrayList<>(in);
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /**
+     * The idempotency keys in window order (oldest first), followed by any key that
+     * was placed in the map without going through {@code recordProcessed} (legacy
+     * snapshots built by tests) so no entry is ever silently dropped from the file.
+     */
+    private static java.util.List<String> orderedProcessedKeys(GlobalCampaignState state) {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        for (String k : state.processedOrderSnapshot()) {
+            if (state.processedOperations.containsKey(k) && !keys.contains(k)) keys.add(k);
+        }
+        java.util.List<String> rest = new java.util.ArrayList<>();
+        for (String k : state.processedOperations.keySet()) {
+            if (!keys.contains(k)) rest.add(k);
+        }
+        java.util.Collections.sort(rest);
+        keys.addAll(rest);
+        return keys;
     }
 
     private static String escape(String s) {
@@ -606,7 +790,10 @@ public class CampaignPersistence {
      * objects can be re-parsed by strict readers.
      */
     private static Map<String, String> splitRawValues(String json) {
-        Map<String, String> map = new HashMap<>();
+        // Insertion-ordered: a legacy snapshot can carry more markers than the
+        // bounded window, and trimming must drop the OLDEST ones. With HashMap the
+        // survivor set was arbitrary, so the newest markers could be discarded.
+        Map<String, String> map = new java.util.LinkedHashMap<>();
         if (json == null) return map;
         String s = json.trim();
         if (s.startsWith("{")) s = s.substring(1);
