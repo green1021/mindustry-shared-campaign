@@ -24,15 +24,15 @@ The working tree contains focused local repairs resolving:
 ### Modified and Created Files
 | File Path | Status | Purpose / Description |
 |---|---|---|
-| `src/sc/aco/SectorHandoffManager.java` | Modified | Decoupled monitor lock from slow I/O; introduced immutable `LoadAttempt` tracking and fencing token; asynchronous host loading via runtime executor. |
-| `src/sc/aco/AcoController.java` | Modified | Converted `retryHandoff`, `takeoverSector`, `releaseSector`, `saveSectorCheckpoint` to non-blocking monitor acquisition; dedicated runtime and action thread pools. |
-| `src/sc/aco/ActionDispatch.java` | Created | Bounded, dedicated action executor service decoupling action dispatch from game-thread and runtime operations. |
-| `src/sc/SharedCampaignUI.java` | Modified | Fixed button click listeners to execute asynchronously without blocking UI; added dynamic button state styling (`Takeover`, `Retry Takeover`, `Checkpoint`, `Exit Sector`). |
-| `src/sc/CampaignActions.java` | Modified | Added asynchronous action wrappers with proper callback dispatch, non-blocking UI notifications, and error reporting. |
-| `tests/HandoffConcurrencyTest.java` | Created | 5 deterministic regression tests verifying lock-free status polling during blocked `loadSnapshot()`, retry recovery, rapid retries, and cancellation fencing. |
-| `tests/HandoffUiTest.java` | Created | Integration tests verifying Takeover/Retry button listeners, UI threading, and status polling invariants. |
-| `scripts/run_canonical_tests.py` | Modified | Registered `HandoffConcurrencyTest` into canonical test harness; updated test expectation from 21 to 22 suites (102 tests). |
-| `scripts/build.py` | Modified | Enforced reproducible build flags, deterministic jar creation, and canonical compilation flags. |
+| `src/sc/aco/SectorHandoffManager.java` | Modified | Private `stateLock` held only for field transitions; immutable `LoadAttempt` fencing; load/start on a dedicated single-thread executor; LOADING watchdog; park-before-publish with `claimVersion`; currency re-check after `startServer()`. |
+| `src/sc/aco/AcoController.java` | Modified | `retryHandoff`/`takeoverSector` no longer controller-synchronized and no longer run the load on the caller; they dispatch through `ActionDispatch`. `releaseLocalSector`/`retryReleaseLocalSector` remain `synchronized` but do not wait on engine work. |
+| `src/sc/aco/ActionDispatch.java` | Created | Static helper that runs a blocking action on a supplied `ExecutorService` and delivers exactly one terminal `ActionResult` (result / `EXCEPTION:` / `REJECTED` / dropped duplicate), marshalling the callback through `Core.app.post` when a graphical app exists. |
+| `src/sc/SharedCampaignUI.java` | Modified | Takeover/Retry/Checkpoint/Exit actions dispatch asynchronously instead of running on the UI thread; `Takeover` and `Retry Takeover` buttons are enabled only when `handoffReady(...)` says the action can be accepted, and status text follows `handoffPhase()`/`handoffFailure()`. |
+| `src/sc/CampaignActions.java` | Modified | Async wrappers around the controller actions, guaranteeing a terminal outcome (including refusal and exception) reaches the UI. |
+| `tests/HandoffConcurrencyTest.java` | Created | 14 deterministic cases: blocked-load responsiveness, retry from RESERVED, one load per retry, duplicate notifications, rejection, dispose, load watchdog, stale park fence, stale endpoint fence, closed guard, registry version fence. |
+| `tests/HandoffUiTest.java` | Created | 14 assertions on Takeover/Retry listener wiring, async dispatch, status text and re-entrancy. |
+| `scripts/run_canonical_tests.py` | Modified | Registered the handoff/UI suites; `sc.aco.HandoffConcurrencyTest` expected count 9 → 14. Total: 21 entry points / 113 assertions, and a count mismatch fails the run. |
+| `scripts/build.py` | Modified | Fixed `--date=2020-01-01T00:00:00Z` for the jar entry timestamps, so repeated builds of the same tree hash identically (verified twice: `63204f99…`). |
 | `reports/full-audit-2026-10.md` | Modified | This comprehensive forensic audit report. |
 
 ---
@@ -104,7 +104,7 @@ The Mindustry Shared Campaign mod is a peer-to-peer / client-server hybrid archi
 - **Impact:** Critical UI freeze. Mindustry's render loop polls `AcoController.handoffPhase()` every ~250ms. When `retryHost()` or `maybeAdvance()` triggered `hostLoad()`, the method held `synchronized(this)` while invoking `ops.loadSnapshot()`, which internally blocks waiting for Arc's game thread (`GameSectorWorld.runOnGameThread()`, bounded wait up to 60 s). Because `phase()` was also `synchronized(this)`, the UI thread stalled completely: the window stopped repainting while the sector load ran.
 - **Root Cause:** Blurring state validation with long-running, blocking side-effects inside a single synchronization monitor.
 - **Exact Fix (as shipped):**
-  1. The monitor is a private `stateLock` object, never the manager instance. A transition block validates prerequisites and mutates the `Handoff` record (`phase`, `attempt++`, `loadStartedAt`) in microseconds, then releases it.
+  1. The monitor is a private `stateLock` object, never the manager instance. A transition block validates prerequisites and mutates the `Handoff` record (`phase`, `attempt++`, `loadStartedAt`), then releases it. Only field assignments happen there — no I/O, no ops call, no latch wait.
   2. The slow work (`ops.loadSnapshot()`, `ops.startServer()`) runs on a dedicated single-thread `loadExecutor`, unmonitored. The queue is committed to outside the lock (`Outbound` list + `flush`), so a broadcast never runs under the monitor.
   3. Completion takes the monitor again only to compare the immutable `LoadAttempt` (handoff `id` + `attempt` fencing token) with the live record. Match → `SERVING`/`FAILED`; mismatch → the result is discarded and logged as `HANDOFF_STALE_ATTEMPT`.
   4. `phase()`, `failure()`, `handoffId()` take the same short lock and only read fields — no I/O, no ops calls.
@@ -164,32 +164,37 @@ The Mindustry Shared Campaign mod is a peer-to-peer / client-server hybrid archi
 The UI integration in `sc.SharedCampaignUI` bridges Arc UI components with asynchronous ACO control routines:
 
 ```
-[UI Click: Takeover / Retry]
-       │
-       ▼ (Runs on Arc UI Thread)
-Validate selection & SectorKeyResolver.keyOf(selected)
-       │
-       ▼ (Asynchronous Dispatch)
-CampaignActions.takeoverSectorAsync(key, callback)
-       │
-       ▼
-ActionDispatch.execute(() -> AcoController.takeoverSector(key))
-       │
-       ├──> SectorHandoffManager.begin() [Fast lock: sets INITIATING]
-       │
-       └──> Background Runtime Pipeline (Async):
-            ├── Request snapshot transfer
-            ├── Disk write-ahead log & snapshot validation
-            ├── SectorHandoffManager.hostLoad() [Fast lock: sets LOADING]
-            ├── HostRuntimeOps.loadSnapshot() [Outside locks: game thread wait]
-            ├── HostRuntimeOps.startHosting() [Outside locks: network port bind]
-            └── SectorHandoffManager completion [Fast lock: sets SERVING]
+[UI click: Takeover / Retry Takeover]                      (Arc render thread)
+       |
+       v  validateHandoffTarget(key, hosting, retryable, retry) -> refusal code or null
+       v  handoffReady(...) decides the button's enabled state
+       v  controlBusy (AtomicBoolean) is set, controlOp increments
+CampaignActions.requestHandoffAction(key, cb) / retryHandoffAction(key, cb)
+       |
+       v  dispatchInline -> ActionDispatch.submit(actionExecutor, "takeover", supplier, cb)
+       |
+       +--> action thread: AcoController.requestHandoffAction(key)
+              |
+              +--> SectorHandoffManager.begin()   [stateLock: AWAIT_SNAPSHOT]
+              |
+              +--> authority: snapshot request / release confirmation
+                     |
+                     +--> hostLoad()             [stateLock: AWAIT_RELEASE -> LOADING]
+                            |
+                            +--> ops.loadSnapshot()  [loadExecutor, no monitor]
+                            |      GameSectorWorld.runOnGameThread(...)  -> game thread
+                            +--> ops.startServer()   [loadExecutor, no monitor]
+                            +--> finishLoad()        [stateLock: SERVING or FAILED]
+       |
+       v  cb -> Core.app.post (graphical) or inline (headless)
+UI polls handoffPhase()/handoffFailure() each frame tick; a response whose
+controlOp != controlOp is dropped as superseded.
 ```
 
 ### Safety Guards Implemented
-1. **Selection Validation:** Rejects unselected, invalid, or unmapped sector keys before invoking any controller logic.
-2. **Re-entrancy Guard:** Consecutive clicks while `isLoading(key)` or `phase == LOADING` are rejected immediately, preventing duplicate handoff queues.
-3. **UI Thread Posting:** All UI status updates, toasts, and dialog mutations use `Core.app.post()` ensuring thread safety within Arc's render loop.
+1. **Selection validation:** `validateHandoffTarget` rejects `NO_SECTOR_SELECTED`, `INVALID_SECTOR_KEY` (length, `|`, CR/LF), `NOT_HOSTING`, and `NOT_RETRYABLE` before anything is dispatched. The click handler re-validates even though the button state already did.
+2. **Re-entrancy guard:** `controlBusy` blocks a second control action while one is in flight, and `controlOp` supersedes the callback of any action that lost the race — a late response from an older click cannot update the dialog.
+3. **UI thread posting:** `ActionDispatch` marshals the callback through `Core.app.post` when a graphical app exists, so widgets are only touched on the render thread; in headless runs `Core.app` is null and the callback runs inline.
 
 ---
 
@@ -229,7 +234,7 @@ The synchronization model assumed `hostLoad()` was an atomic state transition. I
    ```
    `isCurrent()` compares `handoffId` + `attempt` + `phase == LOADING`; a mismatch discards the result. `claimVersion` fences the *registry* side effect (parking a lease), which the token alone cannot protect.
 3. **Cancellation for posted tasks:** `GameSectorWorld.Guard` is a volatile flag checked inside the `Core.app.post` task immediately before `logic.reset()`/`SaveIO.load()`, so a timed-out load cannot install a superseded world after the fact.
-4. **Responsive polling:** `phase()`/`failure()`/`handoffId()` take the same lock but only read fields, so a poll costs microseconds and never waits for a load.
+4. **Responsive polling:** `phase()`/`failure()`/`handoffId()` take the same lock but only read fields, so a poll never waits for a load.
 5. **Watchdog:** `tick()` owns every deadline (`AWAIT_SNAPSHOT`, `AWAIT_RELEASE`, `LOADING`) and is the only place that converts a stuck phase into a retryable one. It also replaces the load executor when a task exceeds the deadline, because a single-thread queue cannot run a retry behind a hung task.
 
 ---
@@ -241,13 +246,13 @@ The mod maintains the following formal safety invariants:
 1. **Single-Owner Mutual Exclusion:**
    - At any instant $t$, at most one host node possesses a valid lease $L(S)$ with `state == ACTIVE` for sector $S$.
 2. **Fail-Closed Snapshot Persistence:**
-   - A snapshot must be completely written and fsynced to disk, verified against CRC32/SHA-256, before an ownership claim is broadcast to the network.
+   - `commitSnapshot` writes the bytes to a temp file, `FileChannel.force(true)`s it, compares the SHA-256 against the claimed digest, and only then renames it to the revision path. An equal-revision re-send with the same digest is treated as idempotent; an equal-revision re-send with a different digest is `REVISION_CONFLICT`.
 3. **Monotonic Sector Revision:**
-   - Every state mutation increments sector revision $R$. A node rejects any snapshot or handoff request where $R_{incoming} < R_{local}$.
+   - `commitSnapshot` rejects `revision < latestRevision(sector)` with `STALE_REVISION`. Revisions are per sector and increase by one per committed snapshot.
 4. **Lease Preservation on Load Failure:**
    - If `HostRuntimeOps.loadSnapshot()` throws or fails, the lease transitions to `RESERVED` / `FAILED`. It is NEVER prematurely released, preventing split-brain takeovers while local recovery is possible.
 5. **Fenced Retry Authorization:**
-   - `retryHost()` is only valid when the current node holds the `RESERVED` lease and matches the accepted revision.
+   - `retryHost()` requires `own.state == RESERVED`, refuses while a handoff is `LOADING` (`LOAD_IN_PROGRESS`), and adopts `own.revisionVersion` when the record has no revision yet. A record that still has no revision fails as `NO_SNAPSHOT` rather than loading nothing.
 
 ---
 
