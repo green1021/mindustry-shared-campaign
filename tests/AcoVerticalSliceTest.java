@@ -46,7 +46,12 @@ import sc.aco.SectorWorldOps;
 public class AcoVerticalSliceTest {
 
     private static final String KEY = "groundZero";
-    private static final String KEY2 = "craters";
+    /**
+     * A real SectorPreset id (ground-zero's neighbour in the vanilla campaign).
+     * The old fixture used "craters", which does not exist in SectorPresets: the
+     * fixture baked in the same bug the authority had.
+     */
+    private static final String KEY2 = "crateredBattleground";
     private static final int P2_PORT = 47811;
 
     /** Host load attempts before the first handoff request; must stay 0. */
@@ -68,8 +73,8 @@ public class AcoVerticalSliceTest {
             run(failed, "handoffFailedSaveKeepsOwnership", f::failedSaveHandoff);
             run(failed, "handoffServesExactSnapshot", f::successfulHandoff);
             run(failed, "joinResolvesHostEndpoint", f::joinResolves);
-            run(failed, "completionSyncUnlocksCraters", f::completionSync);
-            run(failed, "claimAfterUnlockNeverLoadsHostWorld", f::claimCraters);
+            run(failed, "completionSyncUnlocksReportedNeighbors", f::completionSync);
+            run(failed, "claimAfterUnlockNeverLoadsHostWorld", f::claimUnlockedSector);
             run(failed, "hostLoadFailureParksReservedLease", f::failedHostLoad);
             run(failed, "retryHostServesExactSnapshot", f::retryHost);
         } finally {
@@ -266,9 +271,9 @@ public class AcoVerticalSliceTest {
                 : "join endpoint must be the host's P2 endpoint, got: " + resp;
         }
 
-        /** Completing the starting sector broadcasts a sync that unlocks craters. */
+        /** Completing the starting sector broadcasts a sync that unlocks its neighbours. */
         void completionSync() {
-            String resp = clientB.requestSectorCompletion(KEY, "slice-op-1");
+            String resp = clientB.requestSectorCompletion(KEY, "slice-op-1", java.util.List.of(KEY2));
             assert resp != null && resp.contains("SUCCESS") : "completion must succeed, got: " + resp;
             assert waitFor(() -> {
                 GlobalCampaignState view = clientA.getGlobalState();
@@ -277,8 +282,8 @@ public class AcoVerticalSliceTest {
             }, 5000) : "connected client must receive the global-state sync (unlocks " + KEY2 + ")";
         }
 
-        /** Boundary: a claim for craters loads only the client world — host loads unchanged. */
-        void claimCraters() {
+        /** Boundary: claiming the newly unlocked sector loads only the client world. */
+        void claimUnlockedSector() {
             long loadsBefore = hostWorld.totalLoads();
             String err = clientA.claimLocalSector(KEY2, 0);
             assert err == null : "claim of the unlocked sector must succeed, got: " + err;
@@ -287,10 +292,10 @@ public class AcoVerticalSliceTest {
                         + " after=" + hostWorld.totalLoads() + ")";
             assert hostLoadsBeforeFirstHandoff == 0
                 : "host must have loaded no world before the first handoff, was " + hostLoadsBeforeFirstHandoff;
-            assert worldA.loadCount(KEY2) == 1 : "client A must load craters locally, loads=" + worldA.loadCount(KEY2);
+            assert worldA.loadCount(KEY2) == 1 : "client A must load the unlocked sector locally, loads=" + worldA.loadCount(KEY2);
             SectorOwnership own = host.getRegistry().get(KEY2);
             assert own != null && own.kind == SectorOwnership.OwnerKind.CLIENT
-                    && own.state == SectorOwnership.LeaseState.ACTIVE : "craters lease must be CLIENT-owned";
+                    && own.state == SectorOwnership.LeaseState.ACTIVE : "the unlocked sector's lease must be CLIENT-owned";
         }
 
         /** A host-side load failure parks the lease RESERVED and reports HOST_LOAD_FAILED. */
@@ -326,9 +331,9 @@ public class AcoVerticalSliceTest {
             assert hostWorld.loadCount(KEY2) == 2 : "two host load attempts total, got " + hostWorld.loadCount(KEY2);
             SectorOwnership own = host.getRegistry().get(KEY2);
             assert own != null && own.kind == SectorOwnership.OwnerKind.HOST
-                    && own.state == SectorOwnership.LeaseState.ACTIVE : "craters lease must be HOST-owned after retry";
+                    && own.state == SectorOwnership.LeaseState.ACTIVE : "the unlocked sector's lease must be HOST-owned after retry";
             assert own.endpoint != null : "host endpoint must be recorded after serving";
-            assert worldA.saveCount(KEY2) == 1 : "client saved craters exactly once, got " + worldA.saveCount(KEY2);
+            assert worldA.saveCount(KEY2) == 1 : "client saved the unlocked sector exactly once, got " + worldA.saveCount(KEY2);
         }
 
         @Override

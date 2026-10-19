@@ -253,7 +253,14 @@ public final class AcoController implements sc.CampaignActions {
         this.server = new AcoServer(syncPort, authority, registry, globalState, txManager);
         this.server.setSectorStore(sectorStore);
         this.server.setHandoffManager(handoffs);
-        this.server.start();
+        try {
+            this.server.start();
+        } catch (IllegalStateException bindFailure) {
+            // Do not advertise a campaign on a port that is not listening.
+            Log.err("ACO_HOST_BIND_FAILED sync=@", syncPort);
+            this.server = null;
+            return false;
+        }
         this.hosting = true;
 
         Thread watchdog = new Thread(() -> {
@@ -611,8 +618,17 @@ public final class AcoController implements sc.CampaignActions {
     }
 
     public synchronized String requestSectorCompletion(String sectorKey, String operationId) {
+        return requestSectorCompletion(sectorKey, operationId, null);
+    }
+
+    public synchronized String requestSectorCompletion(String sectorKey, String operationId,
+            java.util.List<String> unlockedNeighbors) {
         if (control == null || !connected) return null;
-        return control.request(AcoMessageType.SECTOR_COMPLETION_EVENT, sectorKey + "|" + operationId,
+        StringBuilder payload = new StringBuilder(sectorKey).append('|').append(operationId);
+        if (unlockedNeighbors != null && !unlockedNeighbors.isEmpty()) {
+            payload.append('|').append(String.join(",", unlockedNeighbors));
+        }
+        return control.request(AcoMessageType.SECTOR_COMPLETION_EVENT, payload.toString(),
                 5000, AcoMessageType.SECTOR_COMPLETION_EVENT.id);
     }
 

@@ -110,10 +110,26 @@ public class AcoClient {
      * overload and pass an id unique per (sector, attempt).
      */
     public void sendSectorCompletion(String sector, String opId) {
+        sendSectorCompletion(sector, opId, null);
+    }
+
+    /**
+     * Report a completion together with the sector keys this capture unlocked.
+     *
+     * <p>The authority has no access to the game's planet data, so it cannot derive
+     * progression itself; the previous hardcoded {@code "craters"} rule named a
+     * sector that does not exist in {@code SectorPresets} and could never unlock a
+     * real one. The capturing client enumerates the adjacent sectors from the loaded
+     * planet and the authority validates and merges them.
+     */
+    public void sendSectorCompletion(String sector, String opId, java.util.List<String> unlockedNeighbors) {
         try {
-            String payload = sector + "|" + opId;
+            StringBuilder payload = new StringBuilder(sector).append('|').append(opId);
+            if (unlockedNeighbors != null && !unlockedNeighbors.isEmpty()) {
+                payload.append('|').append(String.join(",", unlockedNeighbors));
+            }
             AcoFrame frame = new AcoFrame((byte)1, AcoMessageType.SECTOR_COMPLETION_EVENT.id, 0,
-                payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                payload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             sendFrame(frame);
         } catch (Exception e) {
             Log.err(e);

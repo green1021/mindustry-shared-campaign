@@ -39,9 +39,42 @@ public class GameplayAdapter {
         // capture as a replay of the first and drop it (see
         // AcoClient.sendSectorCompletion(String, String)).
         Events.on(EventType.SectorCaptureEvent.class, e -> {
+            if (e.sector == null) return;
+            if (e.sector.preset == null) {
+                // Non-preset sectors exist (custom maps, generator sectors); reading
+                // preset.name unconditionally threw inside the event handler.
+                Log.warn("ACO_COMPLETION_SKIPPED no-preset sector=@", e.sector.id);
+                return;
+            }
             String sector = e.sector.preset.name;
-            client.sendSectorCompletion(sector, sector + "@" + completions.incrementAndGet());
+            client.sendSectorCompletion(sector, sector + "@" + completions.incrementAndGet(),
+                neighborKeys(e.sector));
         });
+    }
+
+    /**
+     * Sector keys of the adjacent sectors that have presets, read from the loaded
+     * planet. Progression is game data; the authority cannot derive it, and the old
+     * hardcoded successor ("craters") did not exist. Any failure here yields an
+     * empty list — the completion still applies, it just unlocks nothing.
+     */
+    static java.util.List<String> neighborKeys(mindustry.type.Sector sector) {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        try {
+            sector.near(other -> {
+                if (other != null && other.preset != null
+                    && keys.size() < 16
+                    && SectorSnapshotCodec.validSectorKey(other.preset.name)
+                    && !keys.contains(other.preset.name)) {
+                    keys.add(other.preset.name);
+                }
+            });
+        } catch (Throwable t) {
+            // Planet data is absent in headless runs; this must never break capture.
+            Log.warn("ACO_NEIGHBOR_LOOKUP_FAILED sector=@ : @", sector.id, t.getMessage());
+            return java.util.List.of();
+        }
+        return keys;
     }
 
     // Production-ready hook for resource events
