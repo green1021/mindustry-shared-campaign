@@ -39,12 +39,12 @@ public final class AcoController implements sc.CampaignActions {
     private CampaignAuthority authority;
     private CampaignSectorStore sectorStore;
     private AcoP2Manager p2Manager;
-    private SectorHandoffManager handoffManager;
+    private volatile SectorHandoffManager handoffManager;
     private AcoServer server;
     private SectorHandoffManager.HostRuntimeOps hostOpsOverride;
 
     private boolean initialized;
-    private boolean hosting;
+    private volatile boolean hosting;
 
     /** True when startup recovery refused; the on-disk dataset is left untouched and write-latched. */
     private volatile boolean recoveryRefused;
@@ -69,6 +69,13 @@ public final class AcoController implements sc.CampaignActions {
     private GameSectorWorld localWorld;
     private volatile SectorWorldOps localWorldOpsOverride;
     private java.util.concurrent.ExecutorService pushExecutor;
+    /**
+     * Single-thread executor for UI-dispatched control actions (claim, takeover,
+     * retry, checkpoint, exit). Separate from {@link #pushExecutor} because that
+     * one only exists while a control connection is open, and a pure host must
+     * still run takeover/load work off the game thread.
+     */
+    private volatile java.util.concurrent.ExecutorService actionExecutor;
     private volatile String lastHostChanged;
 
     private java.util.function.BiConsumer<String, Integer> gameplayConnector;
@@ -155,6 +162,10 @@ public final class AcoController implements sc.CampaignActions {
         if (initialized) return;
         initialized = true;
 
+        if (this.actionExecutor == null) {
+            this.actionExecutor = newActionExecutor();
+        }
+
         try {
             Files.createDirectories(storageDir);
         } catch (IOException e) {
@@ -238,16 +249,17 @@ public final class AcoController implements sc.CampaignActions {
         this.sectorPort = sectorPort;
 
         this.handoffManager = new SectorHandoffManager(registry, hostOps(), serverNotifier(), serverBroadcaster());
+        final SectorHandoffManager handoffs = this.handoffManager;
         this.server = new AcoServer(syncPort, authority, registry, globalState, txManager);
         this.server.setSectorStore(sectorStore);
-        this.server.setHandoffManager(handoffManager);
+        this.server.setHandoffManager(handoffs);
         this.server.start();
         this.hosting = true;
 
         Thread watchdog = new Thread(() -> {
             while (hosting) {
                 try {
-                    handoffManager.tick();
+                    handoffs.tick();
                 } catch (Exception e) {
                     Log.err("HANDOFF_WATCHDOG_ERROR", e);
                 }
@@ -296,6 +308,29 @@ public final class AcoController implements sc.CampaignActions {
     private void shutdownPushExecutor() {
         java.util.concurrent.ExecutorService ex = this.pushExecutor;
         this.pushExecutor = null;
+        if (ex != null) ex.shutdownNow();
+    }
+
+    /**
+     * Single worker for control-plane actions started from the game/UI thread.
+     *
+     * <p>Those actions block: they write to a control socket, wait for a
+     * request/response round trip, transfer a snapshot, or park on a
+     * game-thread world load. One thread keeps them strictly ordered (a claim
+     * of the same sector cannot overlap a takeover), and the daemon flag keeps
+     * the JVM from being held open by a stuck worker.
+     */
+    private static java.util.concurrent.ExecutorService newActionExecutor() {
+        return java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "aco-action");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    private void shutdownActionExecutor() {
+        java.util.concurrent.ExecutorService ex = this.actionExecutor;
+        this.actionExecutor = null;
         if (ex != null) ex.shutdownNow();
     }
 
@@ -483,25 +518,39 @@ public final class AcoController implements sc.CampaignActions {
      * the sector world loads and P2 starts on this machine only after the client's
      * final snapshot is committed and its lease released.
      *
+     * <p>Deliberately <em>not</em> synchronized on the controller: the manager owns
+     * its own state lock, and the UI polls {@link #handoffPhase} from the render
+     * thread. A controller monitor here would let any control action stall the poll.
+     *
      * @return null when the handoff started (or completed); otherwise a reason
      */
-    public synchronized String requestHandoff(String sectorKey) {
-        if (!hosting || handoffManager == null) return "NOT_HOSTING";
-        return handoffManager.begin(sectorKey);
+    public String requestHandoff(String sectorKey) {
+        SectorHandoffManager hm = handoffManager;
+        if (!hosting || hm == null) return "NOT_HOSTING";
+        return hm.begin(sectorKey);
     }
 
-    /** Host: retry a failed takeover load (lease parked as RESERVED). */
-    public synchronized String retryHandoff(String sectorKey) {
-        if (!hosting || handoffManager == null) return "NOT_HOSTING";
-        return handoffManager.retryHost(sectorKey);
+    /**
+     * Host: retry a failed takeover load (lease parked as RESERVED). Returns null once
+     * the retry was accepted; the load itself runs on the manager's loader thread, so
+     * poll {@link #handoffPhase} for the outcome.
+     */
+    public String retryHandoff(String sectorKey) {
+        SectorHandoffManager hm = handoffManager;
+        if (!hosting || hm == null) return "NOT_HOSTING";
+        return hm.retryHost(sectorKey);
     }
 
-    public synchronized String handoffPhase(String sectorKey) {
-        return handoffManager == null ? "NO_HOST" : handoffManager.phase(sectorKey);
+    /** UI-facing status read: short manager lock only, never the controller monitor. */
+    public String handoffPhase(String sectorKey) {
+        SectorHandoffManager hm = handoffManager;
+        return hm == null ? "NO_HOST" : hm.phase(sectorKey);
     }
 
-    public synchronized String handoffFailure(String sectorKey) {
-        return handoffManager == null ? null : handoffManager.failure(sectorKey);
+    /** UI-facing status read: short manager lock only, never the controller monitor. */
+    public String handoffFailure(String sectorKey) {
+        SectorHandoffManager hm = handoffManager;
+        return hm == null ? null : hm.failure(sectorKey);
     }
 
     /** Host/operator: reclaim an ORPHANED or RESERVED sector back to FREE. */
@@ -600,16 +649,8 @@ public final class AcoController implements sc.CampaignActions {
 
     @Override
     public void claimSectorAction(String sectorKey, java.util.function.Consumer<sc.ActionResult> callback) {
-        // Use pushExecutor as a single-threaded executor for action dispatch as well
-        submitPush("claim-action", () -> {
-            String err = claimLocalSector(sectorKey, 0);
-            if (err != null) {
-                Log.warn("ACO_CLAIM_ACTION_FAILED sector=@ reason=@", sectorKey, err);
-                arc.Core.app.post(() -> callback.accept(sc.ActionResult.fail(err)));
-            } else {
-                arc.Core.app.post(() -> callback.accept(sc.ActionResult.ok()));
-            }
-        });
+        ActionDispatch.submit(actionExecutor, "claim-action",
+                () -> toResult(claimLocalSector(sectorKey, 0)), callback);
     }
 
     @Override
@@ -667,6 +708,53 @@ public final class AcoController implements sc.CampaignActions {
         return true;
     }
 
+    // --- asynchronous UI entry points ---------------------------------------
+    //
+    // Everything below moves the blocking part (socket round trip, snapshot
+    // transfer, world load) off the caller's thread and delivers exactly one
+    // terminal result back through the app thread. ActionDispatch also covers
+    // executor rejection and task exceptions, so a UI progress indicator can
+    // always be closed.
+
+    @Override
+    public void requestHandoffAction(String sectorKey, java.util.function.Consumer<sc.ActionResult> callback) {
+        ActionDispatch.submit(actionExecutor, "takeover",
+                () -> toResult(requestHandoff(sectorKey)), callback);
+    }
+
+    @Override
+    public void retryHandoffAction(String sectorKey, java.util.function.Consumer<sc.ActionResult> callback) {
+        ActionDispatch.submit(actionExecutor, "retry-takeover",
+                () -> toResult(retryHandoff(sectorKey)), callback);
+    }
+
+    @Override
+    public void checkpointLocalSectorAction(java.util.function.Consumer<sc.ActionResult> callback) {
+        ActionDispatch.submit(actionExecutor, "checkpoint",
+                () -> toResult(checkpointLocalSector()), callback);
+    }
+
+    @Override
+    public void exitLocalSectorAction(java.util.function.Consumer<sc.ActionResult> callback) {
+        ActionDispatch.submit(actionExecutor, "exit",
+                () -> toResult(releaseLocalSector("USER_EXIT")), callback);
+    }
+
+    /**
+     * Only a handoff parked in FAILED is retryable: that is the state the manager
+     * reaches after parking the lease as RESERVED. The authority re-validates the
+     * parked lease when the retry actually runs, so this is a UI gate, not a
+     * substitute for the ownership check.
+     */
+    @Override
+    public boolean isHandoffRetryable(String sectorKey) {
+        return "FAILED".equals(handoffPhase(sectorKey));
+    }
+
+    private static sc.ActionResult toResult(String err) {
+        return err == null ? sc.ActionResult.ok() : sc.ActionResult.fail(err);
+    }
+
     @Override
     public String getStatusText() {
         return getStatus();
@@ -686,6 +774,19 @@ public final class AcoController implements sc.CampaignActions {
         if (localSession != null && localSession.isActive()) {
             Log.warn("ACO_DISPOSE_LOCAL_SECTOR_STILL_ACTIVE sector=@", localSession.sectorKey());
         }
+        // Abandon any in-flight takeover before the executors go away: an attempt whose
+        // load is still running can no longer write state, and one that was never
+        // dispatched must not be left in LOADING forever.
+        SectorHandoffManager hm = handoffManager;
+        if (hm != null) {
+            try {
+                hm.close();
+            } catch (RuntimeException e) {
+                Log.err("ACO_DISPOSE_HANDOFF_CLOSE_FAILED", e);
+            }
+            handoffManager = null;
+        }
+        shutdownActionExecutor();
         shutdownPushExecutor();
         if (control != null) {
             control.close();
@@ -701,11 +802,19 @@ public final class AcoController implements sc.CampaignActions {
         Log.info("ACO_CONTROLLER_DISPOSE");
     }
 
-    public synchronized boolean isHosting() {
+    /**
+     * Render-thread readers must never contend with the controller monitor: several
+     * control actions ({@code requestClaim}, {@code claimLocalSector}, ...) are
+     * synchronized on this controller and block on a socket round trip, so a
+     * synchronized getter here would stall the UI for the duration of that call.
+     * Both fields are volatile and independently meaningful, so a plain read is
+     * consistent enough for status/disable rendering.
+     */
+    public boolean isHosting() {
         return hosting;
     }
 
-    public synchronized boolean isConnected() {
+    public boolean isConnected() {
         return connected;
     }
 

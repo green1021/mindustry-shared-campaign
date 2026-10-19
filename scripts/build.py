@@ -24,7 +24,7 @@ def main():
         cmd.append(str(f))
     run(cmd)
     run(['nice', '-n', '10', 'jar', '-J-Xmx96m', '-J-XX:ActiveProcessorCount=1',
-         '--create', '--no-manifest', '--file', str(JAR),
+         '--create', '--no-manifest', '--date=2020-01-01T00:00:00Z', '--file', str(JAR),
          '-C', str(CLASSES), 'sc', '-C', str(CLASSES), 'mindustry', '-C', str(ROOT), 'mod.json'])
     result = {'exit': 0, 'jar_sha256': hashlib.sha256(JAR.read_bytes()).hexdigest(),
               'engine_sha256': hashlib.sha256(ENGINE.read_bytes()).hexdigest()}
