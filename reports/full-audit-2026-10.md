@@ -13,6 +13,7 @@
 - **Origin Remote:** `https://github.com/green1021/mindustry-shared-campaign.git`
 - **Branch:** `main` (synchronized with `origin/main` at baseline `6dab8d5202b3a90341bd52668cac585cafc9c3fa`)
 - **Baseline Test Suite Status:** 21 suites registered, 97 passing assertions, 0 failing.
+- **Current tree (wave 2, Part II):** 24 suites registered, 151 passing assertions, 0 failing; jar `7a0a6bc8c33e7a5c487ec5dca61008dac0d4d1e8f0d2f697d2b98b25cff347e1`.
 
 ### Working Tree Modifications
 The working tree contains focused local repairs resolving:
@@ -31,7 +32,7 @@ The working tree contains focused local repairs resolving:
 | `src/sc/CampaignActions.java` | Modified | Async wrappers around the controller actions, guaranteeing a terminal outcome (including refusal and exception) reaches the UI. |
 | `tests/HandoffConcurrencyTest.java` | Created | 14 deterministic cases: blocked-load responsiveness, retry from RESERVED, one load per retry, duplicate notifications, rejection, dispose, load watchdog, stale park fence, stale endpoint fence, closed guard, registry version fence. |
 | `tests/HandoffUiTest.java` | Created | 14 assertions on Takeover/Retry listener wiring, async dispatch, status text and re-entrancy. |
-| `scripts/run_canonical_tests.py` | Modified | Registered the handoff/UI suites; `sc.aco.HandoffConcurrencyTest` expected count 9 → 14. Total: 21 entry points / 113 assertions, and a count mismatch fails the run. |
+| `scripts/run_canonical_tests.py` | Modified | Registered the handoff/UI suites; `sc.aco.HandoffConcurrencyTest` expected count 9 → 14. Wave 1 ended at 21 entry points / 113 assertions; wave 2 adds `tests.StorageHardeningTest` (17) and `tests.ProtocolHardeningTest` (17) for 24 / 151. A count mismatch fails the run. |
 | `scripts/build.py` | Modified | Fixed `--date=2020-01-01T00:00:00Z` for the jar entry timestamps, so repeated builds of the same tree hash identically (verified twice: `63204f99…`). |
 | `reports/full-audit-2026-10.md` | Modified | This comprehensive forensic audit report. |
 
@@ -280,7 +281,7 @@ command: nice -n 10 jar ... --create --no-manifest --date=2020-01-01T00:00:00Z \
 ```bash
 python3 scripts/run_canonical_tests.py
 ```
-**Real tail of the canonical run (21 entry points, 113 assertions):**
+**Real tail of the canonical run, wave-1 tree (21 entry points, 113 assertions).** The wave-2 numbers are in §17; the table in §10 lists both generations:
 ```
   PASS SectorLeaseJournalTest (passed=4)
   PASS CampaignSectorStoreTest (passed=7)
@@ -323,6 +324,8 @@ and non-zero exit. The map was then updated to 14 deliberately, not to make a fa
 | `tests.HandoffUiTest` | 14 | **PASS** | Takeover/Retry button state, async dispatch, status text, re-entrancy |
 | `tests.SectorRegistryConcurrencyTest` | 1 | **PASS** | Concurrent claiming keeps exactly one owner |
 | `tests.SectorLeaseJournalTest` | 4 | **PASS** | Journal round-trip and rejection |
+| `tests.StorageHardeningTest` | 17 | **PASS** | Atomic install, torn reads, WAL compaction/replay, idempotency-window eviction, lease-journal creation (§16–§19) |
+| `tests.ProtocolHardeningTest` | 17 | **PASS** | Frame codec bounds, loopback server, oversize/negative lengths, connection limits (§20) |
 | `tests.CampaignSectorStoreTest` | 7 | **PASS** | Snapshot store: revision monotonicity, checksum, idempotent re-send |
 | `tests.WalCorruptionRecoveryTest` | 6 | **PASS** | Truncated/corrupt WAL recovery |
 | `tests.TransactionLogEntryStrictTest` | 7 | **PASS** | Strict transaction-log parsing |
@@ -353,17 +356,18 @@ The production artifact `build/shared-campaign-pc.jar` was generated and verifie
   sha256sum build/shared-campaign-pc.jar
   ```
 - **SHA-256 Digest:**
-  `63204f99a625d8542885cb26b75eb291398d98e975af17bb0f43e9249438d2b2`
+  `7a0a6bc8c33e7a5c487ec5dca61008dac0d4d1e8f0d2f697d2b98b25cff347e1`  (wave 2)
+  `63204f99a625d8542885cb26b75eb291398d98e975af17bb0f43e9249438d2b2`  (wave 1, superseded)
 - **Byte Size:** 208,804 bytes
 - **Engine jar used for compilation:** `/opt/mindustry/server-release.jar`, SHA-256 `0dbd3275402ff6df8367620a47e0b24e4d4547332b99af7c434796520ca484c2`
-- **Determinism:** `scripts/build.py` passes `--no-manifest --date=2020-01-01T00:00:00Z` and compiles with a fixed source order, so the same tree produces the same jar. The hash above is from the tree that this report is committed with.
+- **Determinism:** `scripts/build.py` passes `--no-manifest --date=2020-01-01T00:00:00Z` and compiles with a fixed source order, so the same tree produces the same jar. Measured for wave 2: `/tmp/b7.log` and `/tmp/b8.log` both produced `7a0a6bc8…` from the same sources, and the clean clone in §22 reproduced it a third time.
 
 ---
 
 ## 12. Remaining Risks & Limitations
 
 1. **Headless Environment Limitations:**
-   The control plane, persistence, protocol and the handoff state machine are covered by 21 canonical suites / 113 assertions, but that is not the same as end-to-end coverage: the suites use stub world ops, so real OpenGL context behaviour during a live map load, real socket loss and real `Vars.net` lifecycle interactions remain unproven here. GPU driver quirks (OpenGL context switching during live game-thread map load) cannot be simulated on a headless Linux virtual machine.
+   The control plane, persistence, protocol and the handoff state machine are covered by 24 canonical suites / 151 assertions, but that is not the same as end-to-end coverage: the suites use stub world ops, so real OpenGL context behaviour during a live map load, real socket loss and real `Vars.net` lifecycle interactions remain unproven here. GPU driver quirks (OpenGL context switching during live game-thread map load) cannot be simulated on a headless Linux virtual machine.
 2. **Network Latency & Real-World NAT Traversal:**
    The mod relies on direct IP/port reachability or standard LAN/port-forwarded setups. Aggressive symmetric NAT environments require external STUN/TURN or VPN tunneling (e.g. Tailscale/WireGuard), which is outside the application code scope.
 3. **Arc UI Styling Lifecycle:**
@@ -414,3 +418,366 @@ For each step: timestamped screenshots of the status line, `logs/latest.log` fro
 - **Merge:** not performed and not requested.
 - **Verification at commit time:** `python3 scripts/build.py` exit 0, jar `63204f99a625d8542885cb26b75eb291398d98e975af17bb0f43e9249438d2b2` (208,804 bytes) reproduced byte-for-byte on a second build; `python3 scripts/run_canonical_tests.py` exit 0 with 21 entry points / 113 assertions / 0 failures; `git diff --check` exit 0.
 - **What is still not verified:** the two-machine graphical multiplayer run in §13. It is BLOCKED in this environment and this branch does not claim otherwise.
+
+---
+
+# Part II — Storage, Protocol and Recovery (second pass)
+
+This part covers the changes that were applied to the working tree after Part I was
+published. Everything below is reported against the final source, and every number
+comes from a command whose output is quoted (or whose log file is named).
+
+## 15. Method
+
+- Each file was read in full before it was changed; no finding in this part rests on
+  a previous report, on a filename, or on a class name that was assumed to exist.
+- A change was made only after a defect was reproduced or its contract violation was
+  established from the Java specification. Where a defect could not be reproduced, it
+  is listed as residual risk (section 24) instead of as a finding.
+- Every new test was validated negatively: the fixed behaviour was reverted in a
+  throw-away copy of the tree (`/tmp/M*`), the suite was run against it, and the
+  failure was recorded. Section 23 lists the mutations and the real output.
+- Claims about durability are limited to what the code and the measured probe output
+  support. No statement in this report claims crash safety that was not exercised.
+
+Environment (measured):
+
+```
+java -version   -> openjdk version "17.0.20.1" 2026-08-18
+javac -version  -> javac 17.0.20.1
+engine          -> /opt/mindustry/server-release.jar (v160.4)
+                   sha256 0dbd3275402ff6df8367620a47e0b24e4d4547332b99af7c434796520ca484c2
+```
+
+## 16. Findings in this pass
+
+| # | Severity | Location | Defect (before) | Fix (after) | Test |
+|---|---|---|---|---|---|
+| S1 | High | `GlobalCampaignState.recordProcessed` | `processedOperations` grew without bound; a re-recorded id kept its original queue position, so the next eviction could drop a *live* marker while a stale reference survived | 1024-entry window (`MAX_PROCESSED_OPERATIONS`), LRU refresh (`remove` + `addLast`, exactly one reference per id), removal only through `forgetProcessed` | `StorageHardeningTest` 1–5 |
+| S2 | High | `CampaignPersistence.save` | Fixed temp name `campaign.json.tmp` (two concurrent saves share one file), `Files.writeString`, then `force(true)` on a channel opened `READ` — a no-op by contract — and an fsync attempt on the directory also opened `READ`; `catch (IOException)` only, so a `RuntimeException` from `toJson` left the temp file behind; no monitor, so callers could interleave | Unique temp (`Files.createTempFile`), `FileChannel` opened `WRITE` + `force(true)`, `ATOMIC_MOVE` + `REPLACE_EXISTING`, directory fsync through a writable channel, `installed` flag so the temp is removed on every failure path, `synchronized` so saves cannot interleave | `StorageHardeningTest` 13–14 |
+| S3 | High | `SectorLeaseJournal` constructor | The journal directory was never created. On a fresh campaign the journal reported `lease-journal-directory-missing`, durability was silently disabled for the whole first session, and a crash in that window lost every claim | `Files.createDirectories(dir)` before the readability guard; failure is now `lease-journal-directory-unusable` | `StorageHardeningTest` 17 |
+| S4 | Medium | `AcoServer.start` | `new ServerSocket(port)` ran on the acceptor thread, so a port conflict was reported *after* `start()` returned; callers advertised hosting on a port with no listener | Bind synchronously, store the socket, throw `IllegalStateException("aco-bind-failed:" + port)` and log `ACO_SERVER_BIND_FAILED` | existing bind tests + `ProtocolHardeningTest` host setup |
+| S5 | Medium | `AcoServer` accept loop | `catch (IOException)` wrapped a body whose failures are `RuntimeException`s (`submit` rejection, `handle`), so a programming error killed the acceptor silently | `catch (RuntimeException)` with `ACO_SERVER_ERROR`, and per-connection `IOException`s handled where they occur | `ProtocolHardeningTest` 11–12 |
+| S6 | Medium | `AcoFrame.encode` | A payload above `MAX_PAYLOAD` produced a frame the peer rejects as `invalid-len`; the sender learned nothing and the connection died | `IllegalArgumentException("payload-too-large: …")` at encode time; callers already handle it (`sendToSession` logs `ACO_SEND_TOO_LARGE` and returns false) | `ProtocolHardeningTest` 2 |
+| S7 | Medium | `GameplayAdapter` capture handler | `e.sector.preset.name` was dereferenced unconditionally — non-preset sectors threw inside the event handler — and progression was a hardcoded successor sector that does not exist | `null` guards + `ACO_COMPLETION_SKIPPED` warning; neighbours are read from the loaded planet (`neighborKeys`) and sent with the completion | `AcoVerticalSliceTest`, `AcoBroadcastDesyncTest` |
+| S8 | Medium | `AcoServer` completion / research handlers | State was mutated, persisted, and on failure only the error was returned: the in-memory mutation and the idempotency marker survived a failed save | Explicit compensating rollback under the same monitor, then `forgetProcessed`, then `PERSISTENCE_FAILURE` to the client | `StorageHardeningTest` 3, 11–12 |
+| S9 | Low | `CampaignSectorStore.writeLease` | Lease written in place with the platform default charset: a crash could leave a half-written lease, and the bytes depended on the JVM's locale | Temp file + `ATOMIC_MOVE`, explicit `StandardCharsets.UTF_8` | `StorageHardeningTest` 15 |
+| S10 | Low | `AcoServer` per-connection output | One connection's stream is written by several threads (its own reader, another connection's broadcast, the handoff manager) with no serialization | `SyncOutputStream` wraps every session output; the monitor is per stream, not global | `sc.aco.SyncOutputStreamTest` (4 scenarios) |
+
+Two of these deserve the "before" evidence spelled out, because the old code *looked*
+correct:
+
+- **S2 durability.** `FileChannel.force(true)` on a channel opened with
+  `StandardOpenOption.READ` throws nothing and flushes nothing; the Javadoc states it
+  has no effect when the channel was not opened for writing. Measured on this host:
+
+  ```
+  force_on_read_channel=no_exception
+  force_on_dir_read_channel=no_exception
+  force_on_write_channel=no_exception
+  ```
+
+  So the old `save()` performed no fsync at all, on the file or on the directory,
+  while reading as if it did. The new code opens the temp file `WRITE` and the
+  directory with `WRITE` as well.
+- **S2 concurrency.** `stateFile.resolveSibling("campaign.json.tmp")` is one name for
+  the whole campaign: two saves racing produced one temp file written by both, and
+  the loser's `deleteIfExists` could delete the winner's temp before its move.
+
+## 17. Measured test results (final tree)
+
+```
+$ python3 scripts/build.py
+build=0
+"jar_sha256": "7a0a6bc8c33e7a5c487ec5dca61008dac0d4d1e8f0d2f697d2b98b25cff347e1"
+
+$ python3 scripts/run_canonical_tests.py
+  PASS HandoffConcurrencyTest (passed=14)
+  PASS SyncOutputStreamTest (passed=4)
+  PASS SectorRegistryConcurrencyTest (passed=1)
+Total passed: 151
+Tests failed: 0
+CANONICAL_TEST_SUITE: PASS
+runner exit 0
+```
+
+`grep -c '^  PASS ' /tmp/run_all4.log` → `24`. The runner prints `PASS` only when the
+suite's observed pass count equals its registered `expected` value, so a suite that
+silently stopped discovering tests fails the run instead of passing vacuously.
+
+The two new suites:
+
+- `tests.StorageHardeningTest` (17): `ProcessedWindowIsBounded`,
+  `EvictionNeverDropsLiveMarker`, `ForgetProcessedKeepsWindowConsistent`,
+  `BoundedWindowSurvivesSaveAndReload`, `LegacyHugeWindowIsTrimmedOnLoad`,
+  `StateSyncStaysUnderFrameLimit`, `StateSyncStillCarriesCampaignView`,
+  `CompactionDropsCoveredKeepsNewer`, `CompactionPreservesUnreadableRecord`,
+  `CompactionIsSkippedForSmallLog`, `RecoveryIgnoresCoveredRecordAfterEviction`,
+  `RecoveryAppliesRecordAboveSnapshot`, `ConcurrentSavesNeverExposePartialJson`,
+  `SaveFailureLeavesNoTempFile`, `ConcurrentLeaseWritesAreAtomic`,
+  `OversizedPayloadIsRejected`, `FreshCampaignDirectoryCreatesLeaseJournal`.
+- `tests.ProtocolHardeningTest` (17): `ValidFramesRoundTripAtPayloadLimit`,
+  `OversizePayloadRejected`, `TruncatedHeaderReturnsNull`,
+  `TruncatedPayloadReturnsNullThenCompletes`,
+  `NegativeAndHugeLengthRejectedBeforeAllocation`, `PingPongCorrelatesAndPreservesOrder`,
+  `UnknownMessageTypeIgnoredWithoutStateChange`,
+  `MalformedResourceRequestCannotChangeBalance`,
+  `OperationIdAndNeighborListBounded`, `InvalidSectorKeysRejectedOnEveryPath`,
+  `OversizeDeclaredLengthClosesOnlyThatConnection`,
+  `AbruptDisconnectMidHeaderAndMidPayload`,
+  `BlockedConnectionDoesNotSerializeOthers`, `ConnectionCapRefusesExcessAndRecovers`,
+  `StateSyncFitsOneFrameAtTableCapacity`, `BankCapacityRefusesNewKeysOnly`,
+  `TechCapacityRefusesNewEntriesOnly`.
+
+## 18. The idempotency window: what makes eviction safe
+
+`processedOperations` is bounded to 1024 ids. The question that matters is not
+"does the eviction test pass" but "what stops an evicted id from being applied
+twice". The answer is that the window is a *deduplication cache*, not the durable
+guard; the durable guard is `globalRevision`.
+
+Write path for a bank transaction (`GlobalBank.process`):
+
+1. `state.isProcessed(opId)` — if present, the recorded result is returned and
+   nothing is applied again.
+2. The WAL entry is appended and fsynced (`TransactionLog`) **before** memory is
+   mutated. An append failure returns an error with nothing changed.
+3. Memory is mutated (`balance`, `globalRevision + 1`, marker) under the state
+   monitor.
+4. The snapshot is saved. A failure here does not undo the transaction — it is
+   already durable in the WAL — and the client is told success, because the
+   transaction *is* durable at that point.
+
+Recovery (`CampaignPersistence.recover`):
+
+- Entries at or below the snapshot revision are skipped: the snapshot already
+  contains their effect.
+- Entries above it are replayed by assigning the record's **absolute** resulting
+  balance and revision, not by adding a delta. Replaying the same record twice
+  therefore converges on the same balance.
+- Replay also re-records the marker, so after a restart the in-window duplicate
+  check works exactly as it did before.
+
+Consequences, stated precisely:
+
+- **Eviction cannot resurrect a transaction whose effect is in the snapshot**:
+  those records are dropped from the WAL by compaction (`CompactionDropsCoveredKeepsNewer`)
+  and could never be replayed anyway — the revision fence skips them.
+- **Eviction cannot resurrect a transaction whose effect is only in the WAL**: the
+  record is still there with its absolute result, and a replay of it is idempotent
+  by construction (`RecoveryAppliesRecordAboveSnapshot`).
+- **A client retry with the original `expectedRevision` is rejected as
+  `STALE_REVISION`** regardless of the window, because every applied operation
+  bumps `globalRevision`. The window only saves the *round trip* of that rejection
+  for the last 1024 operations.
+- **Residual risk (not a durability bug).** A client that reuses an *old* `opId`
+  with a *new* `expectedRevision` and a *different* payload is treated as a new
+  operation once the id has been evicted. Inside the window this is caught
+  (`IDEMPOTENCY_PAYLOAD_MISMATCH`, if the recorded result disagrees). Outside the
+  window nothing distinguishes it from a legitimate operation, because the protocol
+  has no client authentication: the authority trusts any connected client. This is
+  the documented trust boundary, not something the 1024-entry window can fix.
+  Closing it would require per-client operation epochs or signed requests, which is
+  a protocol change well outside this pass.
+
+`forgetProcessed(key)` is the only removal path, so the map and the deque cannot
+disagree; it is used exactly where a mutation is rolled back (S8), which is what
+keeps a rolled-back marker from blocking the client's retry.
+
+## 19. WAL, compaction and replay
+
+- Compaction is revision-based: only records **at or below** the revision just
+  snapshotted are dropped. A record above it — including one appended by an
+  in-flight commit that has not reached the snapshot — is kept
+  (`CompactionDropsCoveredKeepsNewer`).
+- An unparsable record is preserved rather than skipped, and it blocks compaction
+  until a clean recovery (`CompactionPreservesUnreadableRecord`). Dropping it would
+  convert "I cannot read this" into "this never happened".
+- Compaction is gated on `WAL_COMPACT_MIN_BYTES = 1 MiB`. The threshold is a
+  performance decision only: correctness does not depend on it, and a smaller log is
+  left alone (`CompactionIsSkippedForSmallLog`), so the 1 MiB value cannot make a
+  correct state incorrect. It does mean a WAL can legitimately exceed the snapshot
+  size before it is rewritten.
+- Recovery refuses writes after a corrupt record (`refusal`) until a clean recovery
+  succeeds, so a partially readable WAL cannot be "repaired" by overwriting it.
+- A truncated tail is treated as an incomplete append, not as corruption, and the
+  remaining records are replayed (`WalCorruptionRecoveryTest`).
+
+## 20. Transaction contract under persistence failure
+
+Both state-changing handlers (`handleSectorCompletion`, `handleResearch`) follow the
+same order under `synchronized (globalState)`:
+
+```
+capture previous values -> mutate -> bump revision -> record marker
+  -> save()
+     success: reply SUCCESS
+     failure: undo every mutation, restore revision, forgetProcessed, reply PERSISTENCE_FAILURE
+```
+
+Because the mutation and its rollback happen under the same monitor, no other
+handler can observe the intermediate state. The remaining window is process death
+between "mutate" and "save": in that case no success was ever sent, and the
+in-memory change dies with the process, so the client's retry is the first durable
+attempt. This is compensation, not a two-phase commit, and it is described that way
+in the code comments.
+
+`GlobalBank` differs deliberately: its WAL append precedes the mutation, so a
+snapshot failure after a successful append is a *successful* transaction. Undoing it
+would contradict the durable record.
+
+## 21. Protocol and resource bounds
+
+| Bound | Value | Enforced at | Test |
+|---|---|---|---|
+| Frame payload | 65536 (`AcoFrame.MAX_PAYLOAD`) | `decode` (before allocation) and `encode` | 1, 2, 5 |
+| Declared length | `0 <= len <= MAX_PAYLOAD` | `decode`, before `new byte[len]` | 5 |
+| Connections | 64 (`AcoServer.MAX_CONNECTIONS`) | accept path; excess is refused, not queued | 14 |
+| Operation id | 128 chars | completion + bank paths | 9 |
+| Neighbour list | 16 keys | `parseNeighborKeys`, each key shape-checked | 9 |
+| Unlocked sectors | 256 | completion path, checked before each insert | 9, 10 |
+| Content name | 64 chars | withdrawal/deposit | 9 |
+| Tech entries | 512 | research path (new keys refused, existing allowed) | 17 |
+| Bank items | 256 (`GlobalBank.MAX_BANK_ITEMS`) | bank path (new keys refused, existing allowed) | 16 |
+
+`StateSyncFitsOneFrameAtTableCapacity` fills the tables to their caps and asserts the
+resulting `GLOBAL_STATE_SYNC` payload still encodes in one frame; that is why the
+caps exist at these values rather than "unbounded". `GLOBAL_STATE_SYNC` uses
+`toSyncJson`, which omits the idempotency table — the 1024-entry window would not fit
+in one frame, and the peer does not need it.
+
+## 22. Per-connection write serialization
+
+`SyncOutputStream` is a `synchronized` delegate wrapper: `write(byte[])`,
+`write(int)`, `flush()` and `close()` all take the same per-instance monitor. The
+server writes a frame with a single `write(frame)` call, so the monitor covers the
+whole frame, and it is per connection, so two connections never wait for each other.
+
+`sc.aco.SyncOutputStreamTest` proves four properties without sleeping:
+
+1. **Serialization is real, not incidental.** The probe asserts
+   `Thread.holdsLock(wrapper)` from inside the delegate on every call. Six threads ×
+   25 frames: `monitorMisses == 0`, `overlap == 0`, 150 complete frames, each frame
+   present exactly 25 times.
+2. **No global lock.** Two independent streams meet at a 2-party `CyclicBarrier`
+   inside their delegates; both trips succeed, which is only possible if both writes
+   are in flight at the same time.
+3. **A failed write releases the monitor.** The delegate throws `IOException`; the
+   exception reaches the caller and the next write succeeds.
+4. **`close()` cannot run under an in-flight frame.** The delegate blocks inside
+   `write` until the test releases it; `close()` is started while the write is
+   provably inside the delegate and must not reach it first
+   (`closedDuringWrite == false`, `closeCount == 1`).
+
+Note on scope: `SyncOutputStream` guarantees *frame* integrity. It does not make the
+connection's lifecycle thread-safe — `dropSession` and the reader thread still own
+that, as in Part I.
+
+## 23. Negative controls (mutation matrix)
+
+Every new suite was validated by reverting the fixed behaviour in a throw-away copy
+of the tree (`/tmp/M*`, copies of the committed source, never committed themselves)
+and running the suite against it. The failure names below are copied from the real
+run output.
+
+| # | Behaviour reverted | Mutation | Result |
+|---|---|---|---|
+| M1 | LRU refresh of the id window | `remove` + `addLast` → append only when absent | `StorageHardeningTest`: 16 passed, 1 failed - `EvictionNeverDropsLiveMarker`; exit 1 |
+| M2 | Atomic snapshot install | `Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)` → `Files.copy(...)` in place | 15 passed, 2 failed - `ConcurrentSavesNeverExposePartialJson`, `SaveFailureLeavesNoTempFile`; exit 1 |
+| M3 | Upper bound on a peer-declared length | `len < 0 \|\| len > MAX_PAYLOAD` → `len < 0` | `ProtocolHardeningTest`: 16 passed, 1 failed - `NegativeAndHugeLengthRejectedBeforeAllocation`; exit 1 |
+| M4 | Per-connection write serialization | `synchronized` removed from `SyncOutputStream.write(byte[],int,int)` | `SyncOutputStreamTest`: 2 passed, 2 failed - `SingleStreamSerializesWriters` (`150 delegate writes ran without holding the per-connection monitor`), `CloseWaitsForInFlightWrite`; exit 1 |
+| M5 | Journal directory creation | `createDirectories(dir)` → `createDirectories(dir.getParent())` | `StorageHardeningTest`: 16 passed, 1 failed - `[ERROR] FreshCampaignDirectoryCreatesLeaseJournal: IOException: lease-journal-directory-missing: …/leases`; exit 1 |
+
+M2 is worth spelling out because it shows why the inode assertion exists: the
+concurrent-reader scenario alone caught nothing on the first attempt (a
+`Files.copy` window is short), while the deterministic check —
+"a save must install a new file, not rewrite the live one" — fails immediately.
+The reader scenario is kept because it covers the observable symptom, but it is not
+the load-bearing assertion.
+
+### Failure propagation through the official runner
+
+Injected into the real worktree: `AcoFrame.decode`'s condition reduced to
+`if (len < 0)`, which is a single-line defect a suite must catch.
+
+```
+$ python3 scripts/run_canonical_tests.py        # with the injection
+[FAIL] ProtocolHardeningTest: expected 17 PASS lines, observed 15
+Total passed: 149
+Tests failed: 1
+CANONICAL_TEST_SUITE: FAIL
+exit code 1
+```
+
+The injection was then removed, the file's SHA-256 compared against the pre-injection
+value (equal), and `scripts/build.py` re-run: `7a0a6bc8…` again, i.e. the same jar as
+before the injection. The full suite was re-run afterwards (section 17).
+
+## 24. Final state, clean clone and residual risk
+
+Commits on `fix/reliable-sector-handoff-2026-10` (PR #1, unmerged):
+
+```
+27d3b2f tests: register StorageHardeningTest, ProtocolHardeningTest and SyncOutputStreamTest
+e1395b1 protocol: bound untrusted input, serialize per-connection writes, fail loudly
+853bdcd storage: bound the idempotency window and make snapshots durable
+c1841f9 docs(audit): correct file-map, call-chain and invariant details   (Part I)
+```
+
+The three commits above are what the clean clone below verifies; this section is
+added by the commit that follows them and changes no source file.
+
+Clean-clone verification (`git clone --depth 1 --branch fix/reliable-sector-handoff-2026-10`):
+
+```
+HEAD                    27d3b2f229b3a49fd0d6c6823fe08e78904e666f
+git status --porcelain  0 lines
+python3 scripts/build.py            -> exit 0, jar sha256 7a0a6bc8c33e7a5c487ec5dca61008dac0d4d1e8f0d2f697d2b98b25cff347e1
+python3 scripts/run_canonical_tests.py -> exit 0, 24 suites, Total passed: 151, Tests failed: 0
+git status --porcelain  still 0 lines (build output is ignored)
+```
+
+The clone's jar hash equals the worktree's, so the build does not depend on local
+files, untracked sources or the previous working tree.
+
+**Not verified, and not claimed:**
+
+- Graphical two-client gameplay, a live sector handoff with real `Vars.world` loads,
+  and GPU rendering. This host is headless (no display, no GPU); the mission's
+  multiplayer protocols are exercised over loopback sockets with stub world ops.
+- There is no CI: the repository has no `.github/workflows`, so nothing but the
+  commands above ran automatically.
+
+**Residual risks (known, documented, not fixed here):**
+
+1. **No client authentication.** The authority trusts connected clients. An old
+   `opId` replayed with a fresh `expectedRevision` and a different payload is
+   indistinguishable from a new operation once its marker has been evicted
+   (section 18). Fixing this needs per-client epochs or signed requests.
+2. **`ATOMIC_MOVE` depends on the filesystem.** On this host (ext4/overlayfs) it
+   works and is observed (section 16). Where rename is unsupported the move throws,
+   the save fails loudly as `PERSISTENCE_FAILURE`, and no non-atomic fallback is
+   attempted - but there is no silent degradation path, so a save either installs a
+   complete file or fails.
+3. **Directory fsync needs a writable directory channel.** Linux allows it; on
+   platforms that do not (Windows), `save()` would fail rather than pretend to be
+   durable. The target platform is Linux only.
+4. **`stateFile.getParent()` is assumed non-null.** A caller passing a bare relative
+   filename would get an NPE from `createTempFile`, surfaced as
+   `PERSISTENCE_FAILURE`. No caller does this today; it is not defended against.
+5. **No write timeout on a connection.** A peer that stops reading blocks its own
+   connection's writers (not others - section 22) until TCP gives up. `setSoTimeout`
+   covers reads only.
+6. **Compaction trades recovery breadth for size.** Records dropped by compaction
+   exist only in the snapshot that covered them; if that snapshot were later
+   corrupted out-of-band, those records cannot be replayed. The snapshot is fsynced
+   and installed atomically before the WAL is rewritten, which is what makes the
+   trade acceptable, but it is a real dependency.
+7. **WAL peak size.** With the 1 MiB threshold, a busy campaign's WAL can exceed the
+   snapshot size before compaction runs. Correctness is unaffected
+   (`CompactionIsSkippedForSmallLog`); disk usage is.
+
+Part I's residual risks (headless GUI, real network loss, real `Vars.net` lifecycle)
+still stand. Nothing in Part II weakens the handoff contracts of Part I: the full
+suite, which includes all 14 handoff concurrency scenarios and the 14 UI scenarios,
+passes on the final tree (section 17).
