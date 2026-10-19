@@ -135,6 +135,32 @@ CANONICAL = [
         'requires_assertions': True,
     },
     {
+        # Storage/persistence hardening: bounded idempotency window (+refresh and
+        # consistent forget), revision-fenced replay, threshold-gated compaction that
+        # never drops an unreadable record, atomic temp->rename install observed by a
+        # concurrent reader, atomic lease rewrite, oversize frame rejection.
+        'name': 'StorageHardeningTest',
+        'main': 'tests.StorageHardeningTest',
+        'sources': ['tests/StorageHardeningTest.java'],
+        'expected': 17,
+        'requires_assertions': True,
+    },
+    {
+        # Protocol/transport hardening against a live loopback AcoServer: frame
+        # codec round trip at MAX_PAYLOAD, oversize/negative/truncated lengths
+        # rejected before allocation, unknown types ignored, malformed resource
+        # and sector requests refused without touching durable state, operation-id
+        # and neighbour caps, hostile declared length isolated to its connection,
+        # disconnects mid-header/mid-payload, one blocked connection not
+        # serializing the others, the 64-connection cap and its recovery, and the
+        # bank/tech table caps keeping GLOBAL_STATE_SYNC inside one frame.
+        'name': 'ProtocolHardeningTest',
+        'main': 'tests.ProtocolHardeningTest',
+        'sources': ['tests/ProtocolHardeningTest.java'],
+        'expected': 17,
+        'requires_assertions': True,
+    },
+    {
         # Row C of PHASE9A_PRE_AUDIT: Vars.world.loadSector(preset.sector) builds a
         # real generated world headless (256x256, every tile floored, campaign state).
         # Boots a full Mindustry runtime, so it needs more than the 96 MiB heap.
@@ -243,6 +269,17 @@ CANONICAL = [
         'main': 'sc.aco.HandoffConcurrencyTest',
         'sources': ['tests/HandoffConcurrencyTest.java', 'tests/TestGuard.java'],
         'expected': 14,
+        'requires_assertions': True,
+    },
+    {
+        # Proves the per-connection write contract of SyncOutputStream: writers on one
+        # stream are serialized (bounded-barrier witness, no sleeps), independent
+        # streams still overlap, a failed write releases the monitor, and close()
+        # cannot run under an in-flight frame.
+        'name': 'SyncOutputStreamTest',
+        'main': 'sc.aco.SyncOutputStreamTest',
+        'sources': ['tests/SyncOutputStreamTest.java', 'tests/TestGuard.java'],
+        'expected': 4,
         'requires_assertions': True,
     },
     {
